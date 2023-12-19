@@ -1,0 +1,4 @@
+saved_models/
+base/runs/
+*.ckpt
+*.pth
