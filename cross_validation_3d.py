@@ -43,12 +43,12 @@ print("running on: {}".format(device))
 def parse_config():
     parser = argparse.ArgumentParser("argument for run segmentation pipeline")
 
-    parser.add_argument("--model", type=str, default="unet_att", help="unet, unet_att")
+    parser.add_argument("--model", type=str, default="unet", help="unet, unet_att")
     parser.add_argument("--n_classes", type=int, default=3, help="2 for only WM and GM, 3 if CSF is included")
-    parser.add_argument("--use_3mm", type=bool, default=False)
+    parser.add_argument("--use_3mm", type=bool, default=True)
     parser.add_argument("--batch_size", type=int, default=24)
-    parser.add_argument("-e", "--epochs", type=int, default=125)
-    parser.add_argument("--num_folds", type=int, default=4)  # For cross-validation, 4 or 5 (without/with 3mm)
+    parser.add_argument("-e", "--epochs", type=int, default=100)
+    parser.add_argument("--num_folds", type=int, default=5)  # For cross-validation, 4 or 5 (without/with 3mm)
     parser.add_argument("--input_shape", nargs=3, type=int, default=[3, 256, 256])
     parser.add_argument("--learning_rate", type=float, default=1e-2)
     parser.add_argument("--shuffle", type=bool, default=True)
@@ -147,9 +147,11 @@ def run_cross_val3d(config, n_folds=4):
     datafolder = os.path.join(config.base_dir, 'DL')
     energies = [50, 70, 120]
 
-    IDs = ["1_Bn52", "4_Jk77", "5_Kg40", "6_Mbr57", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
+    # Removed due to insufficient quality on MRI image
+    # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
+    IDs = ["5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
            "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39"]
-    ids_3mm = ["25_HH57", "26_LB59", "28_LO45", "27_IL48", "29_MS42", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"]  # 3mm
+    ids_3mm = ["25_HH57", "26_LB59", "28_LO45", "27_IL48", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"]  # 3mm
 
     train_transforms = Compose(
         [RandAffined(keys=["img_50", "img_70", "img_120", "seg"], mode=["bilinear", "bilinear", "bilinear", "nearest"],

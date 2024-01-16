@@ -146,6 +146,9 @@ def train_unet(config):
 
     one_case_per_seg = False
 
+    # Removed due to insufficient quality on MRI image
+    # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
+
     test_IDs = ["8_Ms59", "18_MN44", "19_LH64", "33_ET51"]
     exclude = ["1_Bn52","2_Ck79", "3_Cl44", "4_Jk77", "6_Mbr57", "29_MS42"]
     IDs = [ "5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",

@@ -7,7 +7,7 @@ import numpy as np
 
 from utils import ConvLayer, SkipConnection, SeparableConv2d, AttentionBlock, AttentionLayer
 
-device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+device = torch.device("cpu") #torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 
 
 class TorchUnet(nn.Module):
@@ -666,6 +666,12 @@ class UNet_DeepFusion(UNet):
         )
 
 
+def unet_summary(model, input_size):
+    #summary(model, input_size)
+    x = torch.randn(input_size).to(device)
+    for module in model.model.modules():
+        #x = module(x)
+        print(module.__class__.__name__, 'output shape:\t', x.shape)
 
 
 if __name__ == "__main__":
@@ -688,6 +694,7 @@ if __name__ == "__main__":
                          up_kernel_size=3)
 
     summary(unet.to(device), (3, 3, 256, 256))
+    #unet_summary(unet.to(device), (2, 3, 3, 256, 256))
 
     # torchunet = TorchUnet(config=None)
 

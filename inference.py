@@ -260,10 +260,11 @@ if __name__ == "__main__":
 
     datafolder = os.path.join(config.base_dir, 'DL')
 
-    test_IDs = ["2_Ck79", "3_Cl44", "8_Ms59", "18_MN44", "19_LH64"] #, "33_ET51"]
-    IDs = ["1_Bn52", "4_Jk77", "5_Kg40", "6_Mbr57", "7_Mc43", "11_Lh96",
-           "13_NK51", "17_AL67", "20_AR94", "22_CM63", "23_SK52", "24_SE39", "25_HH57",
-           "26_LB59", "29_MS42", "31_EM88", "32_EN56", "34_LO45"]
+    # Removed due to insufficient quality on MRI image
+    # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
+    test_IDs = ["8_Ms59", "18_MN44", "19_LH64"] #, "33_ET51"]
+    IDs = ["5_Kg40", "7_Mc43", "11_Lh96", "13_NK51", "17_AL67", "20_AR94", "22_CM63", "23_SK52", "24_SE39", "25_HH57",
+           "26_LB59", "31_EM88", "32_EN56", "34_LO45"]
 
     # tr_cases = [[f"{datafolder}/{cid}_M{level}_l_T1.nii" for level in energies] + [f"{datafolder}/{cid}_seg3.nii"]
     #            for cid in IDs[3:]]
