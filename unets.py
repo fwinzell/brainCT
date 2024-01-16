@@ -669,9 +669,11 @@ class UNet_DeepFusion(UNet):
 def unet_summary(model, input_size):
     #summary(model, input_size)
     x = torch.randn(input_size).to(device)
+    y = model(x)
     for module in model.model.modules():
-        #x = module(x)
+        x = module(x)
         print(module.__class__.__name__, 'output shape:\t', x.shape)
+        #x = module(x)
 
 
 if __name__ == "__main__":
@@ -693,8 +695,8 @@ if __name__ == "__main__":
                          kernel_size=3,
                          up_kernel_size=3)
 
-    summary(unet.to(device), (3, 3, 256, 256))
-    #unet_summary(unet.to(device), (2, 3, 3, 256, 256))
+    #summary(unet_att.to(device), (3, 3, 256, 256))
+    unet_summary(unet_att.to(device), (2, 3, 3, 256, 256))
 
     # torchunet = TorchUnet(config=None)
 

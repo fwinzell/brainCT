@@ -199,6 +199,6 @@ class AttentionLayer(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         fromlower = self.upconv(self.submodule(x))
         att = self.attention(g=fromlower, x=x)
-        att_m: torch.Tensor = self.merge(torch.cat((att, fromlower), dim=1))
+        att_m: torch.Tensor = torch.cat((att, fromlower), dim=1) #self.merge(torch.cat((att, fromlower), dim=1))
         return att_m
 
