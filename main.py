@@ -6,7 +6,7 @@ import numpy as np
 from torchsummary import summary
 
 from monai.networks.nets import AttentionUnet, UNETR, BasicUNetPlusPlus  # , UNet
-from unets import TorchUnet, UNet, UNet3d_AG
+from unets import UNet, UNet3d_AG, UNet_PlusPlus4
 from torchProject.unet.unet_model import UNetModel
 from pytorch_bcnn.models import BayesianUNet
 from monai.transforms import (
@@ -35,10 +35,10 @@ print(torch.__version__)
 def parse_config():
     parser = argparse.ArgumentParser("argument for run segmentation pipeline")
 
-    parser.add_argument("--model", type=str, default="unet3d_ag",
+    parser.add_argument("--model", type=str, default="unet_plus_plus_3d",
                         help="unet, unet_plus_plus, unetr, attention_unet, bayesian_unet")
     parser.add_argument("--n_classes", type=int, default=3, help="2 for only WM and GM, 3 if CSF is included")
-    parser.add_argument("--batch_size", type=int, default=24)
+    parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("-e", "--epochs", type=int, default=99)
     parser.add_argument("--num_folds", type=int, default=6)  # For cross-validation
     parser.add_argument("--input_shape", nargs=3, type=int, default=[3, 256, 256])
@@ -55,7 +55,7 @@ def parse_config():
     parser.add_argument('--seed', type=int, default=2,
                         help='random seed for reproducible experiment (default: 1)')
 
-    parser.add_argument('--use_3d_input', type=bool, default=True)
+    parser.add_argument('--use_3d_input', type=bool, default=False)
 
     args = parser.parse_args()
     return args
@@ -86,7 +86,7 @@ def get_model(config):
             use_3d_input=config.use_3d_input,
             out_channels_3d=8,
         )
-    if config.model == "unet3d_ag":
+    elif config.model == "unet3d_ag":
         return UNet3d_AG(in_channels=3,
                          out_channels=config.n_classes,
                          out_channels_3d=8,
@@ -107,6 +107,15 @@ def get_model(config):
             in_channels=3,
             out_channels=config.n_classes,
             features=(16, 32, 64, 128, 256, 32),
+            dropout=0.0)
+    elif config.model == "unet_plus_plus_3d":
+        return UNet_PlusPlus4(
+            spatial_dims=2,
+            in_channels=3,
+            out_channels=config.n_classes,
+            out_channels_3d=8,
+            features=(16, 32, 64, 128, 256, 32),
+            use_3d_input=config.use_3d_input,
             dropout=0.0)
     elif config.model == "unetr":
         return UNETR(
@@ -144,7 +153,7 @@ def train_unet(config):
     datafolder = os.path.join(config.base_dir, 'DL')
     energies = [50, 70, 120]
 
-    one_case_per_seg = False
+    one_case_per_seg = True
 
     # Removed due to insufficient quality on MRI image
     # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
@@ -200,7 +209,8 @@ def train_unet(config):
                            'weight_decay': config.weight_decay},
         save_dir=os.path.join(config.save_dir, save_name),
         classes=["wm", "gm", "csf"][:config.n_classes],
-        loss="dice"
+        loss="dice",
+        sigmoid=False
     )
 
     summary(unet.to(device), tuple(config.input_shape))
@@ -257,7 +267,8 @@ def train_unet3d(config):
         save_dir=os.path.join(config.save_dir, save_name),
         classes=["wm", "gm", "csf"][:config.n_classes],
         loss="dice",
-        lr_schedule="none"
+        lr_schedule="none",
+        sigmoid=False
     )
 
     #summary(unet.to(device), tuple([3] + config.input_shape))

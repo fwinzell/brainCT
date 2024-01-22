@@ -1,43 +1,13 @@
 import torch
 import torch.nn as nn
 from torchsummary import summary
-from monai.networks.nets import AttentionUnet
+from monai.networks.nets import AttentionUnet, BasicUNetPlusPlus
 from collections.abc import Sequence
 import numpy as np
 
-from utils import ConvLayer, SkipConnection, SeparableConv2d, AttentionBlock, AttentionLayer
+from utils import ConvLayer, SkipConnection, SeparableConv2d, AttentionBlock, AttentionLayer, PlusUpBlock, PlusDownBlock
 
-device = torch.device("cpu") #torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
-
-
-class TorchUnet(nn.Module):
-    # Warning this is shit
-    def __init__(self, config, freeze=False):
-        super(TorchUnet, self).__init__()
-
-        self.model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
-                                    in_channels=3, out_channels=1, init_features=32, pretrained=True)
-
-        # Replace layers
-        # Input layer
-        # self.model.encoder1.enc1conv1 = nn.Conv2d(3, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
-        # self.model.encoder1.enc1norm1 = nn.BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
-
-        self.model.encoder1 = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False),
-            nn.BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False),
-            nn.BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True),
-            nn.ReLU()
-        )
-
-        # Output layer, add 2 more channels
-        self.upconv1 = nn.ConvTranspose2d(64, 32, kernel_size=(2, 2), stride=(2, 2), bias=True)
-        self.model.conv = nn.Conv2d(32, 3, kernel_size=(1, 1), stride=(1, 1))
-
-    def forward(self, x):
-        return self.model(x)
+device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 
 
 class InputBlock3d(nn.Module):
@@ -72,7 +42,7 @@ class InputBlock3d(nn.Module):
                  kernel_size: Sequence[int] | int = 3,
                  xdinput: int = 3,
                  cat_dim: int = 1,
-                 act: str = "relu",
+                 act: str | tuple = "relu",
                  mode: str = "conv",
                  norm: str = "instance",
                  bias: bool = True,
@@ -157,6 +127,7 @@ class EncoderBlock(nn.Module):
                  in_channels: int,
                  out_channels: int,
                  strides: int = 1,
+                 max_pool: bool = False,
                  kernel_size: Sequence[int] | int = 3,
                  subunits: int = 2,
                  act: str = "relu",
@@ -170,7 +141,12 @@ class EncoderBlock(nn.Module):
         super(EncoderBlock, self).__init__()
 
         self._dims = dimensions
-        self.strides = strides
+        if max_pool:
+            self.strides = 1
+            self.max_pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        else:
+            self.strides = strides
+            self.max_pool = nn.Identity()
         self.in_channels = in_channels
         self.out_channels = out_channels
 
@@ -211,6 +187,7 @@ class EncoderBlock(nn.Module):
             self.residual = nn.Identity(self.out_channels)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.max_pool(x)
         res = self.residual(x)  # create the additive residual from x
         cx = self.conv(x)  # apply x to sequence of operations
         return cx + res  # add the residual to the output
@@ -666,14 +643,174 @@ class UNet_DeepFusion(UNet):
         )
 
 
+class UNet_PlusPlus4(nn.Module):
+    def __init__(self,
+                 spatial_dims: int = 2,
+                 in_channels: int = 1,
+                 out_channels: int = 2,
+                 features: Sequence[int] = (32, 32, 64, 128, 256, 32),
+                 act: str | tuple = ("LeakyReLU", {"negative_slope": 0.1, "inplace": True}),
+                 norm: str | tuple = ("instance", {"affine": True}),
+                 bias: bool = True,
+                 dropout: float | tuple = 0.0,
+                 deep_sup: bool = False,
+                 use_3d_input: bool = False,
+                 out_channels_3d: int = None,
+                 ):
+        super().__init__()
+
+        self.dimensions = spatial_dims
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
+        self.act = act
+        self.norm = norm
+        self.bias = bias
+        self.dropout = dropout
+        self.ds = deep_sup
+
+        # check that features has 6 elements
+        if len(features) != 6:
+            raise ValueError("the length of `features` should be 6 for UNet++L4.")
+
+        self.use_3d_input = use_3d_input
+        if self.use_3d_input:
+            assert out_channels_3d is not None, "out_channels_3d must be specified if use_3d_input is True"
+            self.conv_0_0 = InputBlock3d(
+                self.dimensions,
+                in_channels=in_channels,
+                out_channels=features[0],
+                out_channels_3d=out_channels_3d,
+                act=act,
+                norm=norm,
+                bias=bias,
+                dropout=dropout
+            )
+        else:
+            self.conv_0_0 = nn.Sequential()
+            self.conv_0_0.add_module("conv_0_0_0",
+                                     ConvLayer(
+                                         in_channels,
+                                         features[0],
+                                         dimensions=self.dimensions,
+                                         strides=1,
+                                         kernel_size=3,
+                                         act=act,
+                                         norm=norm,
+                                         bias=bias,
+                                         dropout=dropout,
+                                     ))
+            self.conv_0_0.add_module("conv_0_0_1",
+                                     ConvLayer(features[0], features[0], dimensions=self.dimensions, act=act, norm=norm,
+                                               bias=bias, dropout=dropout, strides=1))
+
+        self.conv_1_0 = PlusDownBlock(self.dimensions, features[0], features[1], act=act, norm=norm, bias=bias,
+                                      dropout=dropout, strides=1, max_pool=True)
+        self.conv_2_0 = PlusDownBlock(self.dimensions, features[1], features[2], act=act, norm=norm, bias=bias,
+                                      dropout=dropout, strides=1, max_pool=True)
+        self.conv_3_0 = PlusDownBlock(self.dimensions, features[2], features[3], act=act, norm=norm, bias=bias,
+                                      dropout=dropout, strides=1, max_pool=True)
+        self.conv_4_0 = PlusDownBlock(self.dimensions, features[3], features[4], act=act, norm=norm, bias=bias,
+                                      dropout=dropout, strides=1, max_pool=True)
+
+        # First upsample concatenation,
+        self.upconcat_0_1 = PlusUpBlock(self.dimensions, features[1], features[0], features[0], act=act, norm=norm,
+                                        bias=bias, dropout=dropout, half_upconv=False)
+        self.upconcat_1_1 = PlusUpBlock(self.dimensions, features[2], features[1], features[1], act=act, norm=norm,
+                                        bias=bias, dropout=dropout)
+        self.upconcat_2_1 = PlusUpBlock(self.dimensions, features[3], features[2], features[2], act=act, norm=norm,
+                                        bias=bias, dropout=dropout)
+        self.upconcat_3_1 = PlusUpBlock(self.dimensions, features[4], features[3], features[3], act=act, norm=norm,
+                                        bias=bias, dropout=dropout)
+
+        # Second upsample concatenation, 2 blocks in concatenation
+        self.upconcat_0_2 = PlusUpBlock(self.dimensions, features[1], features[0] * 2, features[0], act=act, norm=norm,
+                                        bias=bias, dropout=dropout, half_upconv=False)
+        self.upconcat_1_2 = PlusUpBlock(self.dimensions, features[2], features[1] * 2, features[1], act=act, norm=norm,
+                                        bias=bias, dropout=dropout)
+        self.upconcat_2_2 = PlusUpBlock(self.dimensions, features[3], features[2] * 2, features[2], act=act, norm=norm,
+                                        bias=bias, dropout=dropout)
+
+        # Third upsample concatenation, 3 blocks in concatenation
+        self.upconcat_0_3 = PlusUpBlock(self.dimensions, features[1], features[0] * 3, features[0], act=act, norm=norm,
+                                        bias=bias, dropout=dropout, half_upconv=False)
+        self.upconcat_1_3 = PlusUpBlock(self.dimensions, features[2], features[1] * 3, features[1], act=act, norm=norm,
+                                        bias=bias, dropout=dropout)
+
+        # Fourth upsample concatenation, 4 blocks in concatenation, last feature as output
+        self.upconcat_0_4 = PlusUpBlock(self.dimensions, features[1], features[0] * 4, features[5], act=act, norm=norm,
+                                        bias=bias, dropout=dropout, half_upconv=False)
+
+        # Final output(s)
+        self.final_conv_0 = ConvLayer(features[0], out_channels, dimensions=self.dimensions, act="sigmoid", bias=bias,
+                                      norm="none", kernel_size=1, padding=0)
+        self.final_conv_1 = ConvLayer(features[0], out_channels, dimensions=self.dimensions, act="sigmoid", bias=bias,
+                                      norm="none", kernel_size=1, padding=0)
+        self.final_conv_2 = ConvLayer(features[0], out_channels, dimensions=self.dimensions, act="sigmoid", bias=bias,
+                                      norm="none", kernel_size=1, padding=0)
+        self.final_conv_3 = ConvLayer(features[5], out_channels, dimensions=self.dimensions, act="sigmoid", bias=bias,
+                                      norm="none", kernel_size=1, padding=0)
+
+        self.initialize_parameters()
+
+    def initialize_parameters(self,
+                              method_weights=nn.init.kaiming_normal_,
+                              method_bias=nn.init.zeros_,
+                              kwargs_weights={},
+                              kwargs_bias={}
+                              ):
+        print("UNet++ <- Initialized parameters")
+        for module in self.modules():
+            self.weight_init(module, method_weights, **kwargs_weights)  # initialize weights
+            self.bias_init(module, method_bias, **kwargs_bias)  # initialize bias
+
+    @staticmethod
+    def weight_init(module, method, **kwargs):
+        if isinstance(module, (nn.Conv3d, nn.Conv2d, nn.ConvTranspose3d, nn.ConvTranspose2d)):
+            method(module.weight, **kwargs)  # weights
+
+    @staticmethod
+    def bias_init(module, method, **kwargs):
+        if isinstance(module, (nn.Conv3d, nn.Conv2d, nn.ConvTranspose3d, nn.ConvTranspose2d)):
+            method(module.bias, **kwargs)  # bias
+
+    def forward(self, x: torch.Tensor):
+        x_0_0 = self.conv_0_0(x)
+        x_1_0 = self.conv_1_0(x_0_0)
+        x_0_1 = self.upconcat_0_1(x_1_0, x_0_0)
+
+        x_2_0 = self.conv_2_0(x_1_0)
+        x_1_1 = self.upconcat_1_1(x_2_0, x_1_0)
+        x_0_2 = self.upconcat_0_2(x_1_1, torch.cat([x_0_0, x_0_1], dim=1))
+
+        x_3_0 = self.conv_3_0(x_2_0)
+        x_2_1 = self.upconcat_2_1(x_3_0, x_2_0)
+        x_1_2 = self.upconcat_1_2(x_2_1, torch.cat([x_1_0, x_1_1], dim=1))
+        x_0_3 = self.upconcat_0_3(x_1_2, torch.cat([x_0_0, x_0_1, x_0_2], dim=1))
+
+        x_4_0 = self.conv_4_0(x_3_0)
+        x_3_1 = self.upconcat_3_1(x_4_0, x_3_0)
+        x_2_2 = self.upconcat_2_2(x_3_1, torch.cat([x_2_0, x_2_1], dim=1))
+        x_1_3 = self.upconcat_1_3(x_2_2, torch.cat([x_1_0, x_1_1, x_1_2], dim=1))
+        x_0_4 = self.upconcat_0_4(x_1_3, torch.cat([x_0_0, x_0_1, x_0_2, x_0_3], dim=1))
+
+        if self.ds:
+            return [self.final_conv_0(x_0_1),
+                    self.final_conv_1(x_0_2),
+                    self.final_conv_2(x_0_3),
+                    self.final_conv_3(x_0_4)]
+        else:
+            return [self.final_conv_3(x_0_4)]
+
+
 def unet_summary(model, input_size):
-    #summary(model, input_size)
+    # summary(model, input_size)
     x = torch.randn(input_size).to(device)
     y = model(x)
     for module in model.model.modules():
         x = module(x)
         print(module.__class__.__name__, 'output shape:\t', x.shape)
-        #x = module(x)
+        # x = module(x)
 
 
 if __name__ == "__main__":
@@ -695,9 +832,22 @@ if __name__ == "__main__":
                          kernel_size=3,
                          up_kernel_size=3)
 
-    #summary(unet_att.to(device), (3, 3, 256, 256))
-    unet_summary(unet_att.to(device), (2, 3, 3, 256, 256))
+    unet_plus_plus = UNet_PlusPlus4(in_channels=3,
+                                    out_channels=3,
+                                    out_channels_3d=8,
+                                    features=(16, 32, 64, 128, 256, 32),
+                                    deep_sup=True,
+                                    use_3d_input=False)
 
-    # torchunet = TorchUnet(config=None)
+    basic_unetpp = BasicUNetPlusPlus(
+        spatial_dims=2,
+        in_channels=3,
+        out_channels=3,
+        features=(16, 32, 64, 128, 256, 32),
+        deep_supervision=True,
+        dropout=0.0)
 
-    # summary(torchunet.to(device), (3, 256, 256))
+    summary(unet_plus_plus.to(device), (3, 256, 256))
+    #summary(basic_unetpp.to(device), (3, 256, 256))
+
+    # unet_summary(unet_att.to(device), (2, 3, 3, 256, 256))

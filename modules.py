@@ -30,6 +30,7 @@ class SegModule(object):
                  save_dir,
                  classes=["wm", "gm", "csf"],
                  loss="dice",
+                 sigmoid=True,
                  class_weights=None,
                  lr_schedule="multistep"):
         super().__init__()
@@ -49,14 +50,15 @@ class SegModule(object):
         self.device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 
         self.binarize = AsDiscrete(threshold=0.5)
+        self.sigmoid = sigmoid
 
         if loss == "dice":
-            self.loss_module = DiceLoss(include_background=True, to_onehot_y=False, sigmoid=True, squared_pred=True)
+            self.loss_module = DiceLoss(include_background=True, to_onehot_y=False, sigmoid=self.sigmoid, squared_pred=True)
         elif loss == "gdl":
-            self.loss_module = GeneralizedDiceLoss(to_onehot_y=False, sigmoid=True, softmax=False,
+            self.loss_module = GeneralizedDiceLoss(to_onehot_y=False, sigmoid=self.sigmoid, softmax=False,
                                                    include_background=True)
         elif loss == "tversky":
-            self.loss_module = TverskyLoss(to_onehot_y=False, sigmoid=True, softmax=False, alpha=0.7, beta=0.3,
+            self.loss_module = TverskyLoss(to_onehot_y=False, sigmoid=self.sigmoid, softmax=False, alpha=0.7, beta=0.3,
                                            smooth_nr=1e-5, smooth_dr=1e-5)
         else:
             assert False, f'Unknown loss: "{loss}"'
@@ -134,7 +136,10 @@ class SegModule(object):
         loss = self.loss_module(outputs, labels)
 
         # Metrics
-        pred = self.binarize(torch.sigmoid(outputs))
+        if self.sigmoid:
+            pred = self.binarize(torch.sigmoid(outputs))
+        else:
+            pred = self.binarize(outputs)
         dice_score = self._calculate_dice(pred, labels)
         # mean_iou = torch.mean(self.iou(pred, labels))
 
@@ -147,7 +152,10 @@ class SegModule(object):
         if type(outputs) == list:
             outputs = outputs[0]
         # Metrics
-        pred = self.binarize(torch.sigmoid(outputs))
+        if self.sigmoid:
+            pred = self.binarize(torch.sigmoid(outputs))
+        else:
+            pred = self.binarize(outputs)
         dice_score = self._calculate_dice(pred, labels)
         return dice_score
         # mean_iou = torch.mean(self.iou(pred, labels))
@@ -273,6 +281,7 @@ class SegModule3d(SegModule):
                  save_dir,
                  classes: list = ["wm", "gm", "csf"],
                  loss: str = "dice",
+                 sigmoid: bool = True,
                  class_weights=None,
                  lr_schedule: str ="multistep"):
         super().__init__(model,
@@ -286,6 +295,7 @@ class SegModule3d(SegModule):
                          save_dir,
                          classes,
                          loss,
+                         sigmoid,
                          class_weights,
                          lr_schedule)
 

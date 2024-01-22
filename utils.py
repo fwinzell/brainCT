@@ -10,9 +10,9 @@ class ConvLayer(nn.Module):
                  dimensions: int = 2,
                  strides: int = 1,
                  kernel_size: Sequence[int] | int = 3,
-                 act: str = "relu",
+                 act: str | tuple = "relu",
                  mode: str = "conv",
-                 norm: str = "instance",
+                 norm: str | tuple = "instance",
                  bias: bool = True,
                  dropout: float = 0.0,
                  adn_ordering: str = "NDA",
@@ -27,19 +27,38 @@ class ConvLayer(nn.Module):
         self._ordering = adn_ordering
         self._conv_only = conv_only
 
+        act, act_params = self.split_args(act)
+        norm, norm_params = self.split_args(norm)
+
         if act.lower() == "relu":
             self._act = nn.ReLU()
         elif act.lower() == "prelu":
-            self._act = nn.PReLU()
+            if act_params is not None:
+                self._act = nn.PReLU(**act_params)
+            else:
+                self._act = nn.PReLU()
         elif act.lower() == "leakyrelu":
-            self._act = nn.LeakyReLU()
+            if act_params is not None:
+                self._act = nn.LeakyReLU(**act_params)
+            else:
+                self._act = nn.LeakyReLU()
+        elif act.lower() == "sigmoid":
+            self._act = nn.Sigmoid()
         else:
             assert False, f'Unknown activation: "{act}"'
 
         if norm.lower() == "batch":
-            self._norm = nn.BatchNorm2d(self._out_channels)
+            if norm_params is not None:
+                self._norm = nn.BatchNorm2d(self._out_channels, **norm_params)
+            else:
+                self._norm = nn.BatchNorm2d(self._out_channels)
         elif norm.lower() == "instance":
-            self._norm = nn.InstanceNorm2d(self._out_channels)
+            if norm_params is not None:
+                self._norm = nn.InstanceNorm2d(self._out_channels, **norm_params)
+            else:
+                self._norm = nn.InstanceNorm2d(self._out_channels)
+        elif norm.lower() == "none":
+            self._norm = nn.Identity()
         else:
             assert False, f'Unknown normalization: "{norm}"'
 
@@ -59,6 +78,12 @@ class ConvLayer(nn.Module):
 
         self._op_dict = {"A": self._act, "N": self._norm, "D": self._drop}
 
+    @staticmethod
+    def split_args(args):
+        if isinstance(args, tuple):
+            return args
+        else:
+            return args, None
 
     def forward(self, x):
         y = self._conv(x)
@@ -201,4 +226,125 @@ class AttentionLayer(nn.Module):
         att = self.attention(g=fromlower, x=x)
         att_m: torch.Tensor = torch.cat((att, fromlower), dim=1) #self.merge(torch.cat((att, fromlower), dim=1))
         return att_m
+
+
+class PlusDownBlock(nn.Module):
+    def __init__(self,
+                 dimensions: int,
+                 in_channels: int,
+                 out_channels: int,
+                 strides: int = 1,
+                 max_pool: bool = False,
+                 kernel_size: Sequence[int] | int = 3,
+                 act: str = "relu",
+                 mode: str = "conv",
+                 norm: str = "instance",
+                 bias: bool = True,
+                 dropout: float = 0.0,
+                 adn_ordering: str = "NDA",
+                 ):
+        super().__init__()
+
+        self._dims = dimensions
+        if max_pool:
+            self.strides = 1
+            self.max_pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        else:
+            self.strides = strides
+            self.max_pool = nn.Identity()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        self.conv = nn.Sequential()
+
+        interch = in_channels
+        interstr = self.strides
+        for i in range(2):
+            self.conv.add_module(f"conv{i}", ConvLayer(
+                interch,
+                self.out_channels,
+                dimensions=self._dims,
+                strides=interstr,
+                kernel_size=kernel_size,
+                act=act,
+                mode=mode,
+                norm=norm,
+                bias=bias,
+                dropout=dropout,
+                adn_ordering=adn_ordering,
+                conv_only=False,
+            ))
+            interch = self.out_channels
+            interstr = 1
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.max_pool(x)
+        cx = self.conv(x)  # apply x to sequence of operations
+        return cx
+
+
+class PlusUpBlock(nn.Module):
+    def __init__(self,
+                 dimensions,
+                 in_channels,
+                 cat_channels,
+                 out_channels,
+                 act: str | tuple = "relu",
+                 norm: str | tuple = "instance",
+                 bias: bool = True,
+                 dropout: float = 0.0,
+                 adn_ordering: str = "NDA",
+                 half_upconv: bool = True,
+                 ):
+        super().__init__()
+        self._dims = dimensions  # Other than 2 is not implemented
+        self.outc = out_channels
+        self.catc = cat_channels
+        self.inc = in_channels
+
+        if half_upconv:
+            self.upc = self.inc//2
+        else:
+            self.upc = self.inc
+        # output_padding = strides + 2 * self.padding - np.array(kernel_size)
+
+        self.upconv = ConvLayer(
+            in_channels=self.inc,
+            out_channels=self.upc,
+            strides=2,
+            kernel_size=2,
+            padding=0,
+            output_padding=0,
+            conv_only=True,
+            mode="transposed"
+        )
+
+        self.conv = nn.Sequential()
+
+        cat = self.upc + self.catc
+        for i in range(2):
+            self.conv.add_module(
+                f"conv{i}",
+                ConvLayer(
+                    in_channels=cat,
+                    out_channels=self.outc,
+                    strides=1,
+                    kernel_size=3,
+                    act=act,
+                    adn_ordering=adn_ordering,
+                    norm=norm,
+                    bias=bias,
+                    dropout=dropout,
+                )
+            )
+            cat = self.outc
+
+    def forward(self, x: torch.Tensor, x_cat: torch.Tensor) -> torch.Tensor:
+        x_0 = self.upconv(x)
+        x = torch.cat((x_0, x_cat), dim=1)
+        return self.conv(x)
+
+
+
+
 
