@@ -55,7 +55,7 @@ def parse_config():
     parser.add_argument('--seed', type=int, default=2,
                         help='random seed for reproducible experiment (default: 1)')
 
-    parser.add_argument('--use_3d_input', type=bool, default=False)
+    parser.add_argument('--use_3d_input', type=bool, default=True)
 
     args = parser.parse_args()
     return args
@@ -113,9 +113,9 @@ def get_model(config):
             spatial_dims=2,
             in_channels=3,
             out_channels=config.n_classes,
-            out_channels_3d=8,
+            out_channels_3d=16,
             features=(16, 32, 64, 128, 256, 32),
-            use_3d_input=config.use_3d_input,
+            use_3d_input=True,
             dropout=0.0)
     elif config.model == "unetr":
         return UNETR(

@@ -16,6 +16,8 @@ from monai.networks.nets import UNet
 from monai.transforms import AsDiscrete
 from torchmetrics import Dice, JaccardIndex
 
+from display import display_result
+
 
 class SegModule(object):
     def __init__(self,
@@ -156,6 +158,8 @@ class SegModule(object):
             pred = self.binarize(torch.sigmoid(outputs))
         else:
             pred = self.binarize(outputs)
+
+        #display_result(pred[0].unsqueeze(dim=0), labels[0], n_classes=self.n_classes, wait=150)
         dice_score = self._calculate_dice(pred, labels)
         return dice_score
         # mean_iou = torch.mean(self.iou(pred, labels))
@@ -313,7 +317,11 @@ class SegModule3d(SegModule):
         loss = self.loss_module(outputs, labels)
 
         # Metrics
-        pred = self.binarize(torch.sigmoid(outputs))
+        if self.sigmoid:
+            pred = self.binarize(torch.sigmoid(outputs))
+        else:
+            pred = self.binarize(outputs)
+
         dice_score = self._calculate_dice(pred, labels)
 
 
@@ -326,9 +334,15 @@ class SegModule3d(SegModule):
         outputs = self.model(inputs)
         if type(outputs) == list:
             outputs = outputs[0]
+
         # Metrics
-        pred = self.binarize(torch.sigmoid(outputs))
+        if self.sigmoid:
+            pred = self.binarize(torch.sigmoid(outputs))
+        else:
+            pred = self.binarize(outputs)
+
         dice_score = self._calculate_dice(pred, labels)
+        #display_result(pred[0].unsqueeze(dim=0), labels[0], n_classes=self.n_classes, wait=150)
         return dice_score
 
 

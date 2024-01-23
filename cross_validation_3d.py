@@ -10,7 +10,7 @@ from tqdm import tqdm
 import pandas as pd
 from random import randint
 
-from unets import UNet, UNet3d_AG
+from unets import UNet, UNet3d_AG, UNet_PlusPlus4
 from monai.transforms import (
     Compose,
     ToTensord,
@@ -43,14 +43,15 @@ print("running on: {}".format(device))
 def parse_config():
     parser = argparse.ArgumentParser("argument for run segmentation pipeline")
 
-    parser.add_argument("--model", type=str, default="unet", help="unet, unet_att")
+    parser.add_argument("--model", type=str, default="unet_plus_plus", help="unet, unet_att, unet_plus_plus")
     parser.add_argument("--n_classes", type=int, default=3, help="2 for only WM and GM, 3 if CSF is included")
     parser.add_argument("--use_3mm", type=bool, default=True)
-    parser.add_argument("--batch_size", type=int, default=24)
+    parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("-e", "--epochs", type=int, default=100)
     parser.add_argument("--num_folds", type=int, default=5)  # For cross-validation, 4 or 5 (without/with 3mm)
     parser.add_argument("--input_shape", nargs=3, type=int, default=[3, 256, 256])
     parser.add_argument("--learning_rate", type=float, default=1e-2)
+    parser.add_argument("--sigmoid", type=bool, default=False)
     parser.add_argument("--shuffle", type=bool, default=True)
     parser.add_argument("--loss", type=str, default="dice", help="dice, gdl, tversky")
 
@@ -93,6 +94,15 @@ def train_model(config, save_dir, train_dataset, val_dataset):
                              strides=(2, 2, 2, 2),
                              kernel_size=3,
                              up_kernel_size=3)
+        elif config.model == "unet_plus_plus":
+            unet = UNet_PlusPlus4(
+                spatial_dims=2,
+                in_channels=3,
+                out_channels=config.n_classes,
+                out_channels_3d=16,
+                features=(16, 32, 64, 128, 256, 32),
+                use_3d_input=True,
+                dropout=0.0)
 
         module = SegModule3d(
             unet.to(device),
@@ -110,6 +120,7 @@ def train_model(config, save_dir, train_dataset, val_dataset):
             classes=["wm", "gm", "csf"][:config.n_classes],
             loss=config.loss,
             lr_schedule="onplateau",
+            sigmoid=config.sigmoid,
         )
 
         # summary(unet.to(device), tuple(config.input_shape))
@@ -228,7 +239,10 @@ def validate(config, model, val_dataset):
             if type(outputs) == list:
                 outputs = outputs[0]
 
-            y_pred = binarize(torch.sigmoid(outputs))
+            if config.sigmoid:
+                y_pred = binarize(torch.sigmoid(outputs))
+            else:
+                y_pred = binarize(outputs)
 
             for i in range(config.n_classes):
                 pred = y_pred[0, i, :, :]
