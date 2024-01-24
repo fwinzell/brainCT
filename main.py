@@ -113,8 +113,8 @@ def get_model(config):
             spatial_dims=2,
             in_channels=3,
             out_channels=config.n_classes,
-            out_channels_3d=16,
-            features=(16, 32, 64, 128, 256, 32),
+            out_channels_3d=8,
+            features=(16, 32, 64, 128, 256, 16),
             use_3d_input=True,
             dropout=0.0)
     elif config.model == "unetr":

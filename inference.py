@@ -228,9 +228,9 @@ def save_output(model_name, out_vol, test_case):
 
 if __name__ == "__main__":
     save_dir = "/home/fi5666wi/Python/Brain-CT/saved_models"
-    model_name = "unet_plus_plus_3d_2024-01-22"
-    model_path = os.path.join(save_dir,
-                              model_name, 'version_1')
+    model_name = "unet_plus_plus_0" #"unet_plus_plus_3d_2024-01-22"
+    model_path = os.path.join(save_dir, 'crossval_2024-01-23',
+                              model_name, 'version_5')
 
     if os.path.exists(os.path.join(model_path, 'config.yaml')):
         with open(os.path.join(model_path, 'config.yaml'), "r") as f:
@@ -243,6 +243,8 @@ if __name__ == "__main__":
     datafolder = os.path.join(config.base_dir, 'DL')
     config.sigmoid = False
     config.model_name = model_name
+    if config.use_3d_input:
+        config.model = "unet_plus_plus_3d"
 
     # Removed due to insufficient quality on MRI image
     # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
@@ -262,6 +264,6 @@ if __name__ == "__main__":
     test_cases = [[f"{datafolder}/{cid}_M{level}_l_T1.nii" for level in energies] + [f"{datafolder}/{cid}_seg3.nii"]
                 for cid in test_IDs]
 
-
-    eval3d(config, [test_cases[0]], save=True)
+    eval3d(config, test_cases, save=False)
+    #eval3d(config, [test_cases[0]], save=True)
 

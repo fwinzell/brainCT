@@ -43,7 +43,7 @@ print("running on: {}".format(device))
 def parse_config():
     parser = argparse.ArgumentParser("argument for run segmentation pipeline")
 
-    parser.add_argument("--model", type=str, default="unet_plus_plus", help="unet, unet_att, unet_plus_plus")
+    parser.add_argument("--model", type=str, default="unet_att", help="unet_3d, unet_att, unet_plus_plus_3d")
     parser.add_argument("--n_classes", type=int, default=3, help="2 for only WM and GM, 3 if CSF is included")
     parser.add_argument("--use_3mm", type=bool, default=True)
     parser.add_argument("--batch_size", type=int, default=16)
@@ -51,7 +51,7 @@ def parse_config():
     parser.add_argument("--num_folds", type=int, default=5)  # For cross-validation, 4 or 5 (without/with 3mm)
     parser.add_argument("--input_shape", nargs=3, type=int, default=[3, 256, 256])
     parser.add_argument("--learning_rate", type=float, default=1e-2)
-    parser.add_argument("--sigmoid", type=bool, default=False)
+    parser.add_argument("--sigmoid", type=bool, default=True)  # Should be False for unet++
     parser.add_argument("--shuffle", type=bool, default=True)
     parser.add_argument("--loss", type=str, default="dice", help="dice, gdl, tversky")
 
@@ -74,7 +74,7 @@ def train_model(config, save_dir, train_dataset, val_dataset):
     training_completed = False
     while not training_completed:
 
-        if config.model == "unet":
+        if config.model == "unet_3d":
             unet = UNet(
                 spatial_dims=2,
                 in_channels=3,
@@ -94,13 +94,13 @@ def train_model(config, save_dir, train_dataset, val_dataset):
                              strides=(2, 2, 2, 2),
                              kernel_size=3,
                              up_kernel_size=3)
-        elif config.model == "unet_plus_plus":
+        elif config.model == "unet_plus_plus_3d":
             unet = UNet_PlusPlus4(
                 spatial_dims=2,
                 in_channels=3,
                 out_channels=config.n_classes,
-                out_channels_3d=16,
-                features=(16, 32, 64, 128, 256, 32),
+                out_channels_3d=8,
+                features=(16, 32, 64, 128, 256, 16),
                 use_3d_input=True,
                 dropout=0.0)
 

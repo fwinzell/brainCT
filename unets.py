@@ -847,7 +847,7 @@ if __name__ == "__main__":
         deep_supervision=True,
         dropout=0.0)
 
-    summary(unet_plus_plus.to(device), (3, 256, 256))
+    summary(unet_att.to(device), (3, 3, 256, 256))
     #summary(basic_unetpp.to(device), (3, 256, 256))
 
     # unet_summary(unet_att.to(device), (2, 3, 3, 256, 256))
