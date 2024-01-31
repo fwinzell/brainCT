@@ -41,7 +41,7 @@ def eval(model, loader):
                 output = output[0]
             # Metrics
             y_pred = binarize(torch.sigmoid(output))
-            if False:  # torch.count_nonzero(label) != 0:
+            if True:  # torch.count_nonzero(label) != 0:
                 display_result(y_pred, label, n_classes=config.n_classes, wait=1)
 
             for i in range(config.n_classes):
@@ -159,8 +159,8 @@ def run_3d(config, fold_dict, cv_dir, datafolder="/home/fi5666wi/Brain_CT_MR_dat
 if __name__ == "__main__":
     save_dir = "/home/fi5666wi/Python/Brain-CT/saved_models"
     cv_dir = os.path.join(save_dir,
-                          'crossval_2023-10-12', 'unet_plus_plus_0')
-                          #'crossval_2024-01-22', 'unet_plus_plus_3')
+                          #'crossval_2023-10-12', 'unet_plus_plus_0')
+                          'crossval_2024-01-16', 'unet_plus_plus_0')
 
     use_test_set = True
     use_3d_input = False
@@ -179,6 +179,11 @@ if __name__ == "__main__":
     else:
         config = parse_config()
 
+    #config.use_3d_input = use_3d_input
+    #config.sigmoid = True
+    config.shuffle = False
+    config.use_3mm = True
+
     seed_torch(config.seed)
 
     if config.shuffle:
@@ -193,7 +198,7 @@ if __name__ == "__main__":
                      for k in range(config.num_folds)}
 
     if use_3d_input:
-        config.model = "unet_plus_plus_3d"
+        #config.model = "unet_plus_plus_3d"
         run_3d(config, fold_dict, cv_dir, use_test_set=use_test_set, test_IDs=test_IDs)
     else:
         run(config, fold_dict, cv_dir, use_test_set=use_test_set, test_IDs=test_IDs)

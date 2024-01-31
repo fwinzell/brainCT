@@ -86,7 +86,7 @@ def get_model(config):
             use_3d_input=config.use_3d_input,
             out_channels_3d=8,
         )
-    elif config.model == "unet3d_ag":
+    elif config.model == "unet_att":
         return UNet3d_AG(in_channels=3,
                          out_channels=config.n_classes,
                          out_channels_3d=8,

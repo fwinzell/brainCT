@@ -20,15 +20,18 @@ from data_loader import Dataset2hD, BrainDataset, SpectralDataset, BrainXLDatase
 from display import display_result
 
 
-def eval(config, test_cases):
+def eval(config, test_IDs, save=False, level=70, save_name="model"):
     transforms = Compose(
         [ToTensord(keys=["img", "seg"]),
          ScaleIntensityd(keys="img", minv=0.0, maxv=1.0)])
-    # ScaleIntensityd(keys="img", minv=0.0, maxv=1.0)])
 
-    # dataset = Dataset2hD(test_cases, transforms)
-    dataset = BrainXLDataset(test_cases, transforms) #BrainDataset(test_cases, transforms)
-    #dataset = SpectralDataset(test_cases, transforms)
+    if save and len(test_IDs) != 1:
+        print(f"Only one test case can be saved at a time, defaulting to {test_IDs[0]}.")
+        test_IDs = [test_IDs[0]]
+
+    test_cases = [(f"{datafolder}/{cid}_M{level}_l_T1.nii", f"{datafolder}/{cid}_seg3.nii") for cid in test_IDs]
+
+    dataset = BrainXLDataset(test_cases, transforms)
     loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, drop_last=False, num_workers=0)
 
     model = get_model(config)
@@ -42,6 +45,8 @@ def eval(config, test_cases):
     dice_scores = np.zeros((len(loader), config.n_classes))
     iou_scores = np.zeros((len(loader), config.n_classes))
 
+    if save:
+        out_vol = np.zeros((config.n_classes, len(loader), 256, 256))
     for k, batch in enumerate(loader):
         input, label = (batch["img"], batch["seg"])
         with torch.no_grad():
@@ -50,10 +55,11 @@ def eval(config, test_cases):
                 output = output[0]
             # Metrics
             y_pred = binarize(torch.sigmoid(output))
-            # if y_pred.shape[1] == 3:  # If border class is included, add it to gm channel
-            #    y_pred[0, 1, :, :] += y_pred[0, 2, :, :]
             if torch.count_nonzero(label) != 0:
-                display_result(y_pred, label, n_classes=config.n_classes, wait=1)
+                display_result(y_pred, label,  wait=1, n_classes=3)
+
+            if save:
+                out_vol[:, k, :, :] = y_pred.squeeze().cpu().numpy()
 
             for i in range(config.n_classes):
                 pred = y_pred[0, i, :, :]
@@ -66,6 +72,8 @@ def eval(config, test_cases):
     iou_scores = np.nanmean(iou_scores, axis=0)
     print(f"Dice scores (WM/GM/CSF): {np.around(dice_scores, decimals=4)}")
     print(f"IoU scores (WM/GM/CSF): {np.around(iou_scores, decimals=4)}")
+    if save:
+        save_output(save_name, out_vol, test_cases[0][0])
 
 
 def eval_with_voting(config, test_cases):
@@ -158,14 +166,18 @@ def eval_wmgm(config, test_cases):
     print(f"IoU score: {np.around(iou_scores, decimals=4)}")
 
 
-def eval3d(config, test_cases, save=False):
+def eval3d(config, test_IDs, save=False, save_name="model"):
     transforms = Compose(
         [ToTensord(keys=["img_50", "img_70", "img_120", "seg"]),
          ScaleIntensityd(keys=["img_50", "img_70", "img_120"], minv=0.0, maxv=1.0)])
 
-    if save and len(test_cases) != 1:
-        print("Only one test case can be saved at a time, defaulting to first case.")
-        test_cases = test_cases[0]
+    if save and len(test_IDs) != 1:
+        print(f"Only one test case can be saved at a time, defaulting to {test_IDs[0]}.")
+        test_IDs = [test_IDs[0]]
+
+    energies = [50, 70, 120]
+    test_cases = [[f"{datafolder}/{cid}_M{level}_l_T1.nii" for level in energies] + [f"{datafolder}/{cid}_seg3.nii"]
+                  for cid in test_IDs]
 
     dataset = VotingDataset(test_cases, transforms)
     loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, drop_last=False, num_workers=0)
@@ -211,7 +223,7 @@ def eval3d(config, test_cases, save=False):
     print(f"Dice scores (WM/GM/CSF): {np.around(dice_scores, decimals=4)}")
     print(f"IoU scores (WM/GM/CSF): {np.around(iou_scores, decimals=4)}")
     if save:
-        save_output(config.model_name, out_vol, test_cases[0][0])
+        save_output(save_name, out_vol, test_cases[0][0])
 
 
 def save_output(model_name, out_vol, test_case):
@@ -228,9 +240,9 @@ def save_output(model_name, out_vol, test_case):
 
 if __name__ == "__main__":
     save_dir = "/home/fi5666wi/Python/Brain-CT/saved_models"
-    model_name = "unet_plus_plus_0" #"unet_plus_plus_3d_2024-01-22"
-    model_path = os.path.join(save_dir, 'crossval_2024-01-23',
-                              model_name, 'version_5')
+    model_name = "unet_att_0" #"unet_plus_plus_3d_2024-01-22"
+    model_path = os.path.join(save_dir, 'crossval_2024-01-24',
+                              model_name, 'version_4')
 
     if os.path.exists(os.path.join(model_path, 'config.yaml')):
         with open(os.path.join(model_path, 'config.yaml'), "r") as f:
@@ -244,7 +256,7 @@ if __name__ == "__main__":
     config.sigmoid = False
     config.model_name = model_name
     if config.use_3d_input:
-        config.model = "unet_plus_plus_3d"
+        config.model = "unet_att"
 
     # Removed due to insufficient quality on MRI image
     # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
@@ -252,18 +264,6 @@ if __name__ == "__main__":
     IDs = ["5_Kg40", "7_Mc43", "11_Lh96", "13_NK51", "17_AL67", "20_AR94", "22_CM63", "23_SK52", "24_SE39", "25_HH57",
            "26_LB59", "31_EM88", "32_EN56", "34_LO45"]
 
-    # tr_cases = [[f"{datafolder}/{cid}_M{level}_l_T1.nii" for level in energies] + [f"{datafolder}/{cid}_seg3.nii"]
-    #            for cid in IDs[3:]]
-
-    #test_cases = []
-    #energies = [70]
-    #for level in energies:
-    #    test_cases += [(f"{datafolder}/{cid}_M{level}_l_T1.nii", f"{datafolder}/{cid}_seg3.nii") for cid in test_IDs]
-
-    energies = [50, 70, 120]
-    test_cases = [[f"{datafolder}/{cid}_M{level}_l_T1.nii" for level in energies] + [f"{datafolder}/{cid}_seg3.nii"]
-                for cid in test_IDs]
-
-    eval3d(config, test_cases, save=False)
-    #eval3d(config, [test_cases[0]], save=True)
+    eval3d(config, [test_IDs[0]], save=True, save_name="crossval_2024-01-24_v4")
+    #eval(config, [test_IDs[0]], save=True, save_name="crossval_2024-01-16_v4")
 
