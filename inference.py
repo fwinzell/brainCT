@@ -233,7 +233,7 @@ def save_output(model_name, out_vol, test_case):
 
     case_name = test_case.split("/")[-1].split(".")[0]
 
-    sitk.WriteImage(sitk.GetImageFromArray(out_vol), os.path.join(dir_name, f"{case_name}_seg.nii"), imageIO="NiftiImageIO")
+    sitk.WriteImage(sitk.GetImageFromArray(out_vol), os.path.join(dir_name, f"{case_name}_seg.nii.gz"), imageIO="NiftiImageIO")
     print("Saved output @ ", os.path.join(dir_name, f"{case_name}_seg.nii.gz"))
 
 

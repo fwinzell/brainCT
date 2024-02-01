@@ -50,6 +50,9 @@ def parse_config():
     parser.add_argument("--learning_rate", type=float, default=1e-2)
     parser.add_argument("--shuffle", type=bool, default=True)
     parser.add_argument("--loss", type=str, default="dice", help="dice, gdl, tversky")
+    parser.add_argument("--class_weights", nargs=3, type=float, default=[0.87521193, 0.85465177, 10.84828136])
+    # [0.87521193,  0.85465177, 10.84828136] 1E7/total_volumes
+    # [ 0.2663065 ,  0.25394151, 40.91449388] N^2/(total_volumes^2 * 1E4)
 
     parser.add_argument("--base_dir", type=str, default="/home/fi5666wi/Brain_CT_MR_data")
     parser.add_argument("--save_dir", type=str, default="/home/fi5666wi/Python/Brain-CT/saved_models")
@@ -86,7 +89,8 @@ def train_model(config, save_dir, train_dataset, val_dataset):
                                'weight_decay': config.weight_decay},
             save_dir=save_dir,
             classes=["wm", "gm", "csf"][:config.n_classes],
-            loss=config.loss
+            loss=config.loss,
+            class_weights=config.class_weights,
         )
 
         #summary(unet.to(device), tuple(config.input_shape))

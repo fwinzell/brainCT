@@ -43,7 +43,7 @@ print("running on: {}".format(device))
 def parse_config():
     parser = argparse.ArgumentParser("argument for run segmentation pipeline")
 
-    parser.add_argument("--model", type=str, default="unet_att", help="unet_3d, unet_att, unet_plus_plus_3d")
+    parser.add_argument("--model", type=str, default="unet_plus_plus_3d", help="unet_3d, unet_att, unet_plus_plus_3d")
     parser.add_argument("--n_classes", type=int, default=3, help="2 for only WM and GM, 3 if CSF is included")
     parser.add_argument("--use_3mm", type=bool, default=True)
     parser.add_argument("--batch_size", type=int, default=16)
@@ -51,9 +51,12 @@ def parse_config():
     parser.add_argument("--num_folds", type=int, default=5)  # For cross-validation, 4 or 5 (without/with 3mm)
     parser.add_argument("--input_shape", nargs=3, type=int, default=[3, 256, 256])
     parser.add_argument("--learning_rate", type=float, default=1e-2)
-    parser.add_argument("--sigmoid", type=bool, default=True)  # Should be False for unet++
+    parser.add_argument("--sigmoid", type=bool, default=False)  # Should be False for unet++
     parser.add_argument("--shuffle", type=bool, default=True)
     parser.add_argument("--loss", type=str, default="dice", help="dice, gdl, tversky")
+    parser.add_argument("--class_weights", nargs=3, type=float, default=[0.87521193,  0.85465177, 10.84828136])
+    # [0.87521193,  0.85465177, 10.84828136] 1E7/total_volumes
+    # [ 0.2663065 ,  0.25394151, 40.91449388] N^2/(total_volumes^2 * 1E4)
 
     parser.add_argument("--base_dir", type=str, default="/home/fi5666wi/Brain_CT_MR_data")
     parser.add_argument("--save_dir", type=str, default="/home/fi5666wi/Python/Brain-CT/saved_models")
@@ -121,6 +124,7 @@ def train_model(config, save_dir, train_dataset, val_dataset):
             loss=config.loss,
             lr_schedule="onplateau",
             sigmoid=config.sigmoid,
+            class_weights=config.class_weights,
         )
 
         # summary(unet.to(device), tuple(config.input_shape))

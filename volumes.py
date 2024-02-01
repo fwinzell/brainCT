@@ -17,7 +17,7 @@ IDs = ["5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44"
        "25_HH57", "26_LB59", "28_LO45", "27_IL48", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"]  # 3mm
 
 view_seg = False
-total_vols = np.zeros(4)
+total_vols = np.zeros(5)
 for id in IDs:
     case = [(f"{datafolder}/{id}_M70_l_T1.nii", f"{datafolder}/{id}_seg3.nii")]
 
@@ -28,7 +28,7 @@ for id in IDs:
 
     loader = DataLoader(dataset, batch_size=1, shuffle=False, drop_last=False, num_workers=0)
 
-    vols = np.zeros(4)
+    vols = np.zeros(5)
     for i, batch in enumerate(loader):
         seg = batch["seg"]
         seg = seg.numpy().squeeze()
@@ -40,6 +40,7 @@ for id in IDs:
         vols[1] += np.sum(gm)
         vols[2] += np.sum(csf)
         vols[3] += np.sum(non_bg)
+        vols[4] += np.prod(seg.shape)
 
         if view_seg:
             view = np.moveaxis(seg, source=0, destination=-1)*255
@@ -52,8 +53,12 @@ for id in IDs:
     total_vols += vols
 
 ratios = total_vols[0:3]/total_vols[3]
-print(ratios)
-print(f"Class weights: WM: {1-ratios[0]}, GM: {1-ratios[1]}, CSF: {1-ratios[2]}")
+print(f"Ratios: WM: {1-ratios[0]}, GM: {1-ratios[1]}, CSF: {1-ratios[2]}")
 
+freq = total_vols[0:3]/total_vols[4]
+weights = 1E-4/(freq)**2
+print(f"Class weights: WM: {weights[0]}, GM: {weights[1]}, CSF: {weights[2]}")
 
+sums = 1E7/total_vols[0:3]
+print(f"Class sums: WM: {sums[0]}, GM: {sums[1]}, CSF: {sums[2]}")
 

@@ -55,7 +55,8 @@ class SegModule(object):
         self.sigmoid = sigmoid
 
         if loss == "dice":
-            self.loss_module = DiceLoss(include_background=True, to_onehot_y=False, sigmoid=self.sigmoid, squared_pred=True)
+            self.loss_module = DiceLoss(include_background=True, to_onehot_y=False, sigmoid=self.sigmoid,
+                                        squared_pred=True, weight=class_weights)
         elif loss == "gdl":
             self.loss_module = GeneralizedDiceLoss(to_onehot_y=False, sigmoid=self.sigmoid, softmax=False,
                                                    include_background=True)

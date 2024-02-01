@@ -1,9 +1,11 @@
 import SimpleITK as sitk
 import numpy as np
+import torch
 import cv2
 import tkinter as tk
 from tkinter import messagebox
 from PIL import Image, ImageTk
+from torchmetrics import Dice, JaccardIndex
 
 
 class SegmentationGUI:
@@ -130,9 +132,12 @@ class SegmentationGUI2:
 
         assert seg.shape == gt.shape, "Segmentation and ground truth must have the same shape"
 
+        #self.dice = Dice(zero_division=np.nan, ignore_index=0)
+        self.iou = JaccardIndex(task='binary')
+
         self.index = 0
         self.max_index = seg.shape[1] - 1
-        self.canvas = tk.Canvas(master, width=960, height=660)
+        self.canvas = tk.Canvas(master, width=960, height=670)
         self.canvas.pack()
         self.canvas.create_text(160, 5, text="Segmentation", anchor=tk.N)
         self.canvas.create_text(480, 5, text="Ground truth", anchor=tk.N)
@@ -154,11 +159,17 @@ class SegmentationGUI2:
         gt_img = self.display_slice(self.gt[:, self.index, :, :])
         self.gt_on_canvas = self.canvas.create_image(330, 20, anchor=tk.NW, image=gt_img)
 
-        correct_img, wm_img, gm_img, csf_img = self.update_images()
+        correct_img, wm_img, gm_img, csf_img, metric = self.update_images()
         self.correct_on_canvas = self.canvas.create_image(650, 20, anchor=tk.NW, image=correct_img)
         self.wm_on_canvas = self.canvas.create_image(10, 350, anchor=tk.NW, image=wm_img)
+        self.wm_iou = self.canvas.create_text(160, 655, text=f"WM IoU: {metric[0]:.3f}", anchor=tk.N, fill="green")
+
         self.gm_on_canvas = self.canvas.create_image(330, 350, anchor=tk.NW, image=gm_img)
+        self.gm_iou = self.canvas.create_text(480, 655, text=f"GM IoU: {metric[1]:.3f}", anchor=tk.N, fill="blue")
+
         self.csf_on_canvas = self.canvas.create_image(650, 350, anchor=tk.NW, image=csf_img)
+        self.csf_iou = self.canvas.create_text(800, 655, text=f"CSF IoU: {metric[2]:.3f}", anchor=tk.N, fill="red")
+
 
 
     def up_arrow_press(self, event):
@@ -177,18 +188,21 @@ class SegmentationGUI2:
             self.canvas.itemconfig(self.gt_on_canvas, image=gt_img)
             self.canvas.gt_img = gt_img
 
-            correct_img, wm_img, gm_img, csf_img = self.update_images()
+            correct_img, wm_img, gm_img, csf_img, metric = self.update_images()
             self.canvas.itemconfig(self.correct_on_canvas, image=correct_img)
             self.canvas.correct_img = correct_img
 
             self.canvas.itemconfig(self.wm_on_canvas, image=wm_img)
             self.canvas.wm_img = wm_img
+            self.canvas.itemconfig(self.wm_iou, text=f"WM IoU: {metric[0]:.3f}")
 
             self.canvas.itemconfig(self.gm_on_canvas, image=gm_img)
             self.canvas.gm_img = gm_img
+            self.canvas.itemconfig(self.gm_iou, text=f"GM IoU: {metric[1]:.3f}")
 
             self.canvas.itemconfig(self.csf_on_canvas, image=csf_img)
             self.canvas.csf_img = csf_img
+            self.canvas.itemconfig(self.csf_iou, text=f"CSF IoU: {metric[2]:.3f}")
 
     def down_arrow_press(self, event):
         self.index -= 1
@@ -205,22 +219,28 @@ class SegmentationGUI2:
             self.canvas.itemconfig(self.gt_on_canvas, image=gt_img)
             self.canvas.gt_img = gt_img
 
-            correct_img, wm_img, gm_img, csf_img = self.update_images()
+            correct_img, wm_img, gm_img, csf_img, metric = self.update_images()
             self.canvas.itemconfig(self.correct_on_canvas, image=correct_img)
             self.canvas.correct_img = correct_img
 
             self.canvas.itemconfig(self.wm_on_canvas, image=wm_img)
             self.canvas.wm_img = wm_img
+            self.canvas.itemconfig(self.wm_iou, text=f"WM IoU: {metric[0]:.3f}")
 
             self.canvas.itemconfig(self.gm_on_canvas, image=gm_img)
             self.canvas.gm_img = gm_img
+            self.canvas.itemconfig(self.gm_iou, text=f"GM IoU: {metric[1]:.3f}")
 
             self.canvas.itemconfig(self.csf_on_canvas, image=csf_img)
             self.canvas.csf_img = csf_img
+            self.canvas.itemconfig(self.csf_iou, text=f"CSF IoU: {metric[2]:.3f}")
 
     def update_images(self):
         (wm, gm, csf) = np.split(self.seg[:, self.index, :, :], 3, axis=0)
         (wm_t, gm_t, csf_t) = np.split(self.gt[:, self.index, :, :], 3, axis=0)
+        ious = [self.iou(torch.from_numpy(wm), torch.from_numpy(wm_t)).item(),
+                self.iou(torch.from_numpy(gm), torch.from_numpy(gm_t)).item(),
+                self.iou(torch.from_numpy(csf), torch.from_numpy(csf_t)).item()]
 
         wm_pred = np.zeros((256, 256, 3), dtype=np.uint8)
         wm_corr = np.logical_and(wm, wm_t)
@@ -259,7 +279,7 @@ class SegmentationGUI2:
         pred_img = Image.fromarray(pred_img)
         tk_img = ImageTk.PhotoImage(pred_img.resize((300, 300)))
 
-        return tk_img, tk_wm_img, tk_gm_img, tk_csf_img
+        return tk_img, tk_wm_img, tk_gm_img, tk_csf_img, ious
 
     def handle_keys(self):
         # Check if the up or down arrow keys are being held down
@@ -308,13 +328,34 @@ def load_gt_nii(path):
 
     return indxs
 
+def calculate_metrics(seg, gt):
+    dice = Dice(zero_division=np.nan, ignore_index=0)
+    iou = JaccardIndex(task='binary')
+
+    (wm, gm, csf) = np.split(seg, 3, axis=0)
+    (wm_t, gm_t, csf_t) = np.split(gt, 3, axis=0)
+    ious = [iou(torch.from_numpy(wm), torch.from_numpy(wm_t)).item(),
+            iou(torch.from_numpy(gm), torch.from_numpy(gm_t)).item(),
+            iou(torch.from_numpy(csf), torch.from_numpy(csf_t)).item()]
+    dscs = [dice(torch.from_numpy(wm), torch.from_numpy(wm_t)).item(),
+            dice(torch.from_numpy(gm), torch.from_numpy(gm_t)).item(),
+            dice(torch.from_numpy(csf), torch.from_numpy(csf_t)).item()]
+
+    return ious, dscs
+
+
+
 if __name__ == "__main__":
-    path = "/home/fi5666wi/Brain_CT_MR_data/OUT/unet_plus_plus_3d_2024-01-22/8_Ms59_M50_l_T1_seg.nii"
+    path = "/home/fi5666wi/Brain_CT_MR_data/OUT/crossval_2024-01-15_v3/8_Ms59_M50_l_T1_seg.nii.gz"
     gt_path = "/home/fi5666wi/Brain_CT_MR_data/DL/8_Ms59_seg3.nii"
     seg = load_nii(path)
     gt = load_gt_nii(gt_path)
     print(seg.shape)
     print(gt.shape)
+
+    ious, dscs = calculate_metrics(seg, gt)
+    print(f"Dice scores (WM/GM/CSF): {np.around(dscs, decimals=4)}")
+    print(f"IoU scores (WM/GM/CSF): {np.around(ious, decimals=4)}")
 
     # Create the Tkinter window
     root = tk.Tk()
