@@ -35,14 +35,17 @@ print(torch.__version__)
 def parse_config():
     parser = argparse.ArgumentParser("argument for run segmentation pipeline")
 
-    parser.add_argument("--model", type=str, default="unet_plus_plus_3d",
+    parser.add_argument("--model", type=str, default="unet_att",
                         help="unet, unet_plus_plus, unetr, attention_unet, bayesian_unet")
     parser.add_argument("--n_classes", type=int, default=3, help="2 for only WM and GM, 3 if CSF is included")
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("-e", "--epochs", type=int, default=99)
     parser.add_argument("--num_folds", type=int, default=6)  # For cross-validation
     parser.add_argument("--input_shape", nargs=3, type=int, default=[3, 256, 256])
-    parser.add_argument("--learning_rate", type=float, default=0.01)
+    parser.add_argument("--learning_rate", type=float, default=0.01) # prev 0.01
+    parser.add_argument("--class_weights", nargs=3, type=float, default=[0.87521193, 0.85465177, 10.84828136])
+    # [0.87521193,  0.85465177, 10.84828136] 1E7/total_volumes
+    # [ 0.2663065 ,  0.25394151, 40.91449388] N^2/(total_volumes^2 * 1E4)
 
     parser.add_argument("--base_dir", type=str, default="/home/fi5666wi/Brain_CT_MR_data")
     parser.add_argument("--save_dir", type=str, default="/home/fi5666wi/Python/Brain-CT/saved_models")
@@ -157,12 +160,10 @@ def train_unet(config):
 
     # Removed due to insufficient quality on MRI image
     # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
-
-    test_IDs = ["8_Ms59", "18_MN44", "19_LH64", "33_ET51"]
-    exclude = ["1_Bn52","2_Ck79", "3_Cl44", "4_Jk77", "6_Mbr57", "29_MS42"]
-    IDs = [ "5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
-           "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39"]
-    # "25_HH57", "26_LB59", "28_LO45" , "27_IL48" ,, "30_MJ80", "31_EM88", "32_EN56", "34_LO45"] # 3mm
+    test_IDs = ["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "26_LB59", "33_ET51"]
+    IDs = ["5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
+           "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39",
+            "25_HH57", "28_LO45", "27_IL48", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"] # 3mm
 
     if one_case_per_seg:
         tr_cases, val_cases = [], []
@@ -210,7 +211,7 @@ def train_unet(config):
         save_dir=os.path.join(config.save_dir, save_name),
         classes=["wm", "gm", "csf"][:config.n_classes],
         loss="dice",
-        sigmoid=False
+        sigmoid=True # should be True for MONAI models, and U-Net, False for UNet++ and UNet3D_AG
     )
 
     summary(unet.to(device), tuple(config.input_shape))
@@ -223,11 +224,12 @@ def train_unet3d(config):
     datafolder = os.path.join(config.base_dir, 'DL')
     energies = [50, 70, 120]
 
-    test_IDs = ["8_Ms59", "18_MN44", "19_LH64", "33_ET51"]
-    exclude = ["1_Bn52", "2_Ck79", "3_Cl44", "4_Jk77", "6_Mbr57", "29_MS42"]
+    # Removed due to insufficient quality on MRI image
+    # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
+    test_IDs = ["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "26_LB59", "33_ET51"]
     IDs = ["5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
-           "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39"]
-    # "25_HH57", "26_LB59", "28_LO45" , "27_IL48" ,"29_MS42", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"] # 3mm
+           "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39",
+           "25_HH57", "28_LO45", "27_IL48", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"]  # 3mm
 
     tr_cases = [[f"{datafolder}/{cid}_M{level}_l_T1.nii" for level in energies] + [f"{datafolder}/{cid}_seg3.nii"]
                 for cid in IDs[3:]]
@@ -248,32 +250,36 @@ def train_unet3d(config):
     train_dataset = VotingDataset(tr_cases, train_transforms)
     val_dataset = VotingDataset(val_cases, val_transforms)
 
-    unet = get_model(config).to(device)
+    training_finished = False
+    while not training_finished:
+        unet = get_model(config).to(device)
 
-    save_name = "{}_{}".format(config.model, config.date)
+        save_name = "{}_{}".format(config.model, config.date)
 
-    module = SegModule3d(
-        unet,
-        train_dataset,
-        val_dataset,
-        max_epochs=config.epochs,
-        batch_size=config.batch_size,
-        learning_rate=config.learning_rate,
-        optimizer_name='Adam',
-        optimizer_hparams={'lr': config.learning_rate,
-                           'betas': config.betas,
-                           'eps': config.eps,
-                           'weight_decay': config.weight_decay},
-        save_dir=os.path.join(config.save_dir, save_name),
-        classes=["wm", "gm", "csf"][:config.n_classes],
-        loss="dice",
-        lr_schedule="none",
-        sigmoid=False
-    )
+        module = SegModule3d(
+            unet,
+            train_dataset,
+            val_dataset,
+            max_epochs=config.epochs,
+            batch_size=config.batch_size,
+            learning_rate=config.learning_rate,
+            optimizer_name='Adam',
+            optimizer_hparams={'lr': config.learning_rate,
+                               'betas': config.betas,
+                               'eps': config.eps,
+                               'weight_decay': config.weight_decay},
+            save_dir=os.path.join(config.save_dir, save_name),
+            classes=["wm", "gm", "csf"][:config.n_classes],
+            loss="dice",
+            lr_schedule="none",
+            sigmoid=False,
+            class_weights=config.class_weights,
+        )
 
-    #summary(unet.to(device), tuple([3] + config.input_shape))
+        #summary(unet.to(device), tuple([3] + config.input_shape))
 
-    module.train()
+        training_finished = module.train()
+
     module.save_config(config)  # to .yaml file
 
 

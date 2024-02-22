@@ -12,6 +12,7 @@ from monai.transforms import (
 )
 from monai.networks.nets import UNet
 from torchmetrics import Dice, JaccardIndex
+from monai.metrics import HausdorffDistanceMetric
 import SimpleITK as sitk
 
 #from modules import SegModule
@@ -76,10 +77,14 @@ def eval(config, test_IDs, save=False, level=70, save_name="model"):
         save_output(save_name, out_vol, test_cases[0][0])
 
 
-def eval_with_voting(config, test_cases):
+def eval_with_voting(config, test_IDs):
     transforms = Compose(
         [ToTensord(keys=["img_50", "img_70", "img_120", "seg"]),
          ScaleIntensityd(keys=["img_50", "img_70", "img_120"], minv=0.0, maxv=1.0)])
+
+    energies = [50, 70, 120]
+    test_cases = [[f"{datafolder}/{cid}_M{level}_l_T1.nii" for level in energies] + [f"{datafolder}/{cid}_seg3.nii"]
+                  for cid in test_IDs]
 
     dataset = VotingDataset(test_cases, transforms)
     loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, drop_last=False, num_workers=0)
@@ -183,14 +188,16 @@ def eval3d(config, test_IDs, save=False, save_name="model"):
     loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, drop_last=False, num_workers=0)
 
     model = get_model(config)
-    model.load_state_dict(torch.load(os.path.join(model_path, 'last.pth')), strict=True)
+    model.load_state_dict(torch.load(os.path.join(model_path, 'best.pth')), strict=True)
     model.eval()
     binarize = AsDiscrete(threshold=0.5)
 
     dsc = Dice(zero_division=np.nan, ignore_index=0)  # DiceMetric(include_background=True)
     iou = JaccardIndex(task='binary')  # MeanIoU(include_background=True)
+    hdm = HausdorffDistanceMetric(include_background=True)
     dice_scores = np.zeros((len(loader), config.n_classes))
     iou_scores = np.zeros((len(loader), config.n_classes))
+    hausdorff = np.zeros((len(loader), config.n_classes))
 
     out_vol = np.zeros((config.n_classes, len(loader), 256, 256))
     for k, batch in enumerate(loader):
@@ -209,19 +216,23 @@ def eval3d(config, test_IDs, save=False, save_name="model"):
                 out_vol[:, k, :, :] = y_pred.squeeze().cpu().numpy()
 
             if torch.count_nonzero(label) != 0:
-                display_result(y_pred, label, n_classes=config.n_classes, wait=50)
+                display_result(y_pred, label, n_classes=config.n_classes, wait=1)
 
             for i in range(config.n_classes):
                 pred = y_pred[0, i, :, :]
                 tar = label[0, i, :, :]
                 dice_scores[k, i] = dsc(pred.to(torch.uint8), tar).item()
                 iou_scores[k, i] = iou(pred.to(torch.uint8), tar).item()
+            hausdorff[k, ] = hdm(y_pred=y_pred, y=label, spacing=1)
 
     dice_scores = np.nanmean(dice_scores, axis=0)
     # iou_scores = iou_scores[~np.isnan(iou_scores)]
     iou_scores = np.nanmean(iou_scores, axis=0)
+    hausdorff[np.isinf(hausdorff)] = np.nan # Remove inf values
+    h_distances = np.nanmean(hausdorff, axis=0)
     print(f"Dice scores (WM/GM/CSF): {np.around(dice_scores, decimals=4)}")
     print(f"IoU scores (WM/GM/CSF): {np.around(iou_scores, decimals=4)}")
+    print(f"Hausdorff distance (WM/GM/CSF): {np.around(h_distances, decimals=4)}")
     if save:
         save_output(save_name, out_vol, test_cases[0][0])
 
@@ -240,9 +251,9 @@ def save_output(model_name, out_vol, test_case):
 
 if __name__ == "__main__":
     save_dir = "/home/fi5666wi/Python/Brain-CT/saved_models"
-    model_name = "unet_att_0" #"unet_plus_plus_3d_2024-01-22"
-    model_path = os.path.join(save_dir, 'crossval_2024-01-24',
-                              model_name, 'version_4')
+    model_name = "unet_att_2024-02-20/"
+    model_path = os.path.join(save_dir, #'crossval_2024-01-23',
+                              model_name, 'version_1')
 
     if os.path.exists(os.path.join(model_path, 'config.yaml')):
         with open(os.path.join(model_path, 'config.yaml'), "r") as f:
@@ -255,15 +266,17 @@ if __name__ == "__main__":
     datafolder = os.path.join(config.base_dir, 'DL')
     config.sigmoid = False
     config.model_name = model_name
-    if config.use_3d_input:
-        config.model = "unet_att"
+    if config.use_3d_input and config.model != "unet":
+       config.model = "unet_att"
 
     # Removed due to insufficient quality on MRI image
     # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
-    test_IDs = ["8_Ms59", "18_MN44", "19_LH64"] #, "33_ET51"]
-    IDs = ["5_Kg40", "7_Mc43", "11_Lh96", "13_NK51", "17_AL67", "20_AR94", "22_CM63", "23_SK52", "24_SE39", "25_HH57",
-           "26_LB59", "31_EM88", "32_EN56", "34_LO45"]
+    test_IDs = ["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "26_LB59", "33_ET51"]
+    IDs = ["5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
+           "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39",
+           "25_HH57", "28_LO45", "27_IL48", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"]  # 3mm
 
-    eval3d(config, [test_IDs[0]], save=True, save_name="crossval_2024-01-24_v4")
-    #eval(config, [test_IDs[0]], save=True, save_name="crossval_2024-01-16_v4")
+    eval3d(config, test_IDs, save=False) #, save_name="crossval_2024-01-24_v4")
+    #eval(config, test_IDs, save=False) #save_name="crossval_2024-01-16_v4")
+    #eval_with_voting(config, test_IDs)
 

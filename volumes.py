@@ -1,64 +1,162 @@
-from monai.transforms import Compose, ToTensord, ScaleIntensityd
-import torch
 import numpy as np
+import SimpleITK as sitk
+import torch
 import cv2
-from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import vtk
 
-from data_loader import BrainXLDataset
+def make_ax(grid=False):
+    fig = plt.figure()
+    ax = plt.axes(projection='3d')
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+    ax.grid(grid)
+    return ax
 
-datafolder = "/home/fi5666wi/Brain_CT_MR_data/DL"
+def explode(data):
+    shape_arr = np.array(data.shape)
+    size = shape_arr[:3] * 2 - 1
+    exploded = np.zeros(np.concatenate([size, shape_arr[3:]]), dtype=data.dtype)
+    exploded[::2, ::2, ::2] = data
+    return exploded
 
-# Removed due to insufficient quality on MRI image
-# 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
+def expand_coordinates(indices):
+    x, y, z = indices
+    x[1::2, :, :] += 1
+    y[:, 1::2, :] += 1
+    z[:, :, 1::2] += 1
+    return x, y, z
 
-test_IDs = ["8_Ms59", "18_MN44", "19_LH64", "33_ET51"]
-IDs = ["5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
-       "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39",
-       "25_HH57", "26_LB59", "28_LO45", "27_IL48", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"]  # 3mm
+def plot_cube():
+    ax = make_ax()
+    colors = np.array([[['#1f77b430'] * 3] * 3] * 3)
+    colors[1, 1, 1] = '#ff0000ff'
+    colors[0, :, :] = '#d5f5e330'
+    colors = explode(colors)
+    filled = explode(np.ones((3, 3, 3)))
+    x, y, z = expand_coordinates(np.indices(np.array(filled.shape) + 1))
+    ax.voxels(x, y, z, filled, facecolors=colors, edgecolors='gray', shade=False)
+    plt.show()
 
-view_seg = False
-total_vols = np.zeros(5)
-for id in IDs:
-    case = [(f"{datafolder}/{id}_M70_l_T1.nii", f"{datafolder}/{id}_seg3.nii")]
 
-    val_transforms = Compose([ToTensord(keys=["img", "seg"]),
-                              ScaleIntensityd(keys="img", minv=0.0, maxv=1.0)])
+def load_nii(path):
+    img = sitk.ReadImage(path)
+    img = sitk.GetArrayFromImage(img)
+    return img
 
-    dataset = BrainXLDataset(case, transform=val_transforms)
+def load_gt_nii(path):
+    indxs = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(path)), 0)
+    valid_slices = np.argwhere(np.squeeze(indxs).sum(axis=2).sum(axis=1) > 0)
+    valid_slices = valid_slices[1:-1, 0] # -2 to account for last and first slice in 2.5D
+    #indxs = indxs[:, valid_slices, :, :]
 
-    loader = DataLoader(dataset, batch_size=1, shuffle=False, drop_last=False, num_workers=0)
+    CSF = indxs == 3
+    GM = indxs == 2
+    WM = indxs == 1
 
-    vols = np.zeros(5)
-    for i, batch in enumerate(loader):
-        seg = batch["seg"]
-        seg = seg.numpy().squeeze()
-        wm = seg[0, :, :]
-        gm = seg[1, :, :]
-        csf = seg[2, :, :]
-        non_bg = np.any(seg, axis=0)
-        vols[0] += np.sum(wm)
-        vols[1] += np.sum(gm)
-        vols[2] += np.sum(csf)
-        vols[3] += np.sum(non_bg)
-        vols[4] += np.prod(seg.shape)
+    indxs = np.concatenate((WM, GM, CSF), axis=0)
 
-        if view_seg:
-            view = np.moveaxis(seg, source=0, destination=-1)*255
-            cv2.imshow("seg", view)
-            cv2.waitKey(100)
+    return indxs
 
-    print(f"ID: {id}")
-    print(f"WM: {vols[0]/1000}, GM: {vols[1]/1000}, CSF: {vols[2]/1000}, non-bg: {vols[3]/1000}")
-    #print(f"Ratios: WM: {vols[0]/vols[3]}, GM: {vols[1]/vols[3]}, CSF: {vols[2]/vols[3]}")
-    total_vols += vols
 
-ratios = total_vols[0:3]/total_vols[3]
-print(f"Ratios: WM: {1-ratios[0]}, GM: {1-ratios[1]}, CSF: {1-ratios[2]}")
+def downsample_seg(seg, factor):
+    """
+    Downsample a segmentation by a factor
+    :param seg: 3D numpy array
+    :param factor: int or tuple of ints
+    """
+    seg = seg.squeeze()
+    assert len(seg.shape) == 3
 
-freq = total_vols[0:3]/total_vols[4]
-weights = 1E-4/(freq)**2
-print(f"Class weights: WM: {weights[0]}, GM: {weights[1]}, CSF: {weights[2]}")
+    if isinstance(factor, int):
+        factor = (factor,) * 3
+    factor = tuple(int(f) for f in factor)
 
-sums = 1E7/total_vols[0:3]
-print(f"Class sums: WM: {sums[0]}, GM: {sums[1]}, CSF: {sums[2]}")
+    valid_slices = np.argwhere(np.squeeze(seg).sum(axis=2).sum(axis=0) > 0)
+
+    cseg = seg[valid_slices, :, :].squeeze()
+
+    # Perform downsampling
+    downsampled = cseg[::factor[0], ::factor[1], ::factor[2]]
+
+    return downsampled
+
+def display_csf(seg, ax):
+    csf = downsample_seg(seg[2, :, :, :], 3)
+    ax.voxels(csf, facecolors='red', edgecolors='red', shade=True)
+    plt.show()
+
+def display_wm(seg, ax):
+    wm = downsample_seg(seg[0, :, :, :], 3)
+    ax.voxels(wm, facecolors='green', edgecolors='green', shade=True)
+    plt.show()
+
+def display_gm(seg, ax):
+    gm = downsample_seg(seg[1, :, :, :], 3)
+    ax.voxels(gm, facecolors='blue', edgecolors='blue', shade=True)
+    plt.show()
+
+def display_3d(seg, ax):
+    wm = seg[0, :, :, :]
+    wm = wm[::4, ::4, ::4]
+    gm = seg[1, :, :, :]
+    gm = gm[::4, ::4, ::4]
+    csf = seg[2, :, :, :]
+    csf = csf[::4, ::4, ::4]
+
+    x, y, z = wm.shape
+    wm[:int(x/2), :int(y/2), :] = 0
+    gm[:int(x/2), :int(y/2), :] = 0
+    csf[:int(x/2), :int(y/2), :] = 0
+
+
+    ax.voxels(wm, facecolors=[0, 1, 0, 0.5], edgecolors='green', shade=True)
+    ax.voxels(gm, facecolors=[0, 0, 1, 0.5], edgecolors='blue', shade=True)
+    ax.voxels(csf, facecolors=[1, 0, 0, 0.5], edgecolors='red', shade=True)
+    plt.show()
+
+def calculate_volume(seg, voxel_size):
+    """
+    Calculate the volume of each class in the segmentation
+    :param seg: 3D numpy array
+    :return: list of volumes
+    """
+    wm = np.squeeze(seg[0, :, :, :])
+    gm = np.squeeze(seg[1, :, :, :])
+    csf = np.squeeze(seg[2, :, :, :])
+
+    vol_wm = np.sum(wm)
+    vol_gm = np.sum(gm)
+    vol_csf = np.sum(csf)
+    return [vol_wm*voxel_size, vol_gm*voxel_size, vol_csf*voxel_size]
+
+if __name__ == "__main__":
+
+    path = "/home/fi5666wi/Brain_CT_MR_data/OUT/crossval_2024-01-15_v3/8_Ms59_M50_l_T1_seg.nii.gz"
+    gt_path = "/home/fi5666wi/Brain_CT_MR_data/DL/8_Ms59_seg3.nii"
+    seg = load_nii(path)
+    gt = load_gt_nii(gt_path)
+    print(seg.shape)
+    print(gt.shape)
+
+    print(calculate_volume(gt, 0.001))
+    print(calculate_volume(seg, 0.001))
+
+    #display_3d(gt, make_ax())
+
+    plot_cube()
+
+    #display_vtk(gt)
+    #spiral()
+
+    #ax = make_ax(False)
+
+    #display_csf(gt, ax)
+    #display_wm(gt, ax)
+    #display_gm(gt, ax)
+
+
+
 

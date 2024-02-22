@@ -821,7 +821,7 @@ if __name__ == "__main__":
                 strides=(2, 2, 2, 2),
                 kernel_size=3,
                 up_kernel_size=3,
-                use_3d_input=True,
+                use_3d_input=False,
                 out_channels_3d=8)
 
     unet_att = UNet3d_AG(in_channels=3,
@@ -836,8 +836,8 @@ if __name__ == "__main__":
                                     out_channels=3,
                                     out_channels_3d=8,
                                     features=(16, 32, 64, 128, 256, 32),
-                                    deep_sup=True,
-                                    use_3d_input=False)
+                                    deep_sup=False,
+                                    use_3d_input=True)
 
     basic_unetpp = BasicUNetPlusPlus(
         spatial_dims=2,
@@ -847,7 +847,8 @@ if __name__ == "__main__":
         deep_supervision=True,
         dropout=0.0)
 
-    summary(unet_att.to(device), (3, 3, 256, 256))
-    #summary(basic_unetpp.to(device), (3, 256, 256))
-
+    #summary(unet_att.to(device), (3, 3, 256, 256))
+    summary(basic_unetpp.to(device), (3, 256, 256))
+    summary(unet.to(device), ( 3, 256, 256))
+    #summary(unet_plus_plus.to(device), (3, 3, 256, 256))
     # unet_summary(unet_att.to(device), (2, 3, 3, 256, 256))
