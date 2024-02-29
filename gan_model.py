@@ -4,7 +4,7 @@ from torchsummary import summary
 from collections.abc import Sequence
 import numpy as np
 
-from utils import ConvLayer, SkipConnection
+from utils import ConvLayer, SkipConnection, ParallelConnection, DoubleSkipConnection
 from unets import EncoderBlock, DecoderBlock, InputBlock3d
 
 device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
@@ -135,22 +135,29 @@ class GUNet(nn.Module):
             down = self._get_input3d_layer(inc, c, s)
         else:
             down = self._get_enc_layer(inc, c, s, is_top)  # create layer in downsampling path
-        up = self._get_dec_layer(upc, outc, s, is_top)  # create layer in upsampling path
+        up_seg = self._get_dec_layer(upc, outc, s, is_top)  # create layer in segmentation path
+        # create layer in reconstruction path
+        if is_top:
+            up_rec = self._get_dec_layer(upc, 1, s, is_top)
+        else:
+            up_rec = self._get_dec_layer(upc, outc, s, is_top)
 
-        return self._get_connection_block(down, up, subblock)
+        return self._get_connection_block(down, up_seg, up_rec, subblock)
 
-    def _get_connection_block(self, down_path: nn.Module, up_path: nn.Module, subblock: nn.Module) -> nn.Module:
+    def _get_connection_block(self, down_path: nn.Module, up_seg: nn.Module, up_rec: nn.Module, subblock: nn.Module) -> nn.Module:
         """
         Returns the block object defining a layer of the UNet structure including the implementation of the skip
         between encoding (down) and decoding (up) sides of the network.
 
         Args:
             down_path: encoding half of the layer
-            up_path: decoding half of the layer
+            up_seg: decoding half of the layer in segmentation path
+            up_rec: decoding half of the layer in reconstruction path
             subblock: block defining the next layer in the network.
-        Returns: block for this layer: `nn.Sequential(down_path, SkipConnection(subblock), up_path)`
+        Returns: block for this layer: `ParallelConnection(down_path, DoubleSkipConnection(subblock), up_seg, up_rec)`
+
         """
-        return nn.Sequential(down_path, SkipConnection(subblock), up_path)
+        return ParallelConnection(down_path, DoubleSkipConnection(subblock), up_seg, up_rec)
 
     def _get_enc_layer(self, in_channels: int, out_channels: int, strides: int, is_top: bool) -> nn.Module:
         """
@@ -245,3 +252,18 @@ class GUNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.model(x)
         return x
+
+
+if __name__ == "__main__":
+    model = GUNet(spatial_dims=2,
+                in_channels=3,
+                out_channels=3,
+                channels=(16, 32, 64, 128, 256),
+                strides=(2, 2, 4, 4),
+                kernel_size=3,
+                up_kernel_size=3,
+                use_3d_input=False,
+                out_channels_3d=8)
+
+
+    summary(model.to(device), (3, 256, 256))

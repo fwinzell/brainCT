@@ -127,6 +127,45 @@ class SkipConnection(nn.Module):
         y = self.submodule(x)
         return torch.cat([x, y], dim=self.dim)
 
+class DoubleSkipConnection(nn.Module):
+    """
+    Combine the forward pass input with the result from the given submodule
+    """
+    def __init__(self, submodule, dim: int = 1) -> None:
+        """
+        Args:
+            submodule: the module defines the trainable branch.
+            dim: the dimension over which the tensors are concatenated.
+        """
+        super().__init__()
+        self.submodule = submodule
+        self.dim = dim
+
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+        yy = self.submodule(x)
+        if isinstance(yy, torch.Tensor):
+            zz = [torch.cat([x, yy], dim=self.dim) for i in range(2)]
+        else:
+            zz = [torch.cat([x, y], dim=self.dim) for y in yy]
+        return zz
+
+
+class ParallelConnection(nn.Module):
+    def __init__(self, down, conn, up1, up2) -> None:
+        super().__init__()
+        self.down = down
+        self.conn = conn
+        self.up1 = up1
+        self.up2 = up2
+
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+        x = self.down(x)
+        x = self.conn(x)
+        x_1 = self.up1(x[0])
+        x_2 = self.up2(x[1])
+
+        return [x_1, x_2]
+
 
 class AttentionBlock(nn.Module):
     def __init__(self, spatial_dims: int, f_int: int, f_g: int, f_l: int, dropout=0.0):

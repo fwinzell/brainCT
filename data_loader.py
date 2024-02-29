@@ -429,6 +429,7 @@ class InfDataset(SpectralDataset):
 if __name__ == "__main__":
     datafolder = "/home/fi5666wi/Brain_CT_MR_data/DL"
 
+    """
     train_transforms = Compose(
         [RandAffined(keys=["img_50", "img_70", "img_120", "seg"], mode=["bilinear", "bilinear", "bilinear", "nearest"],
                      prob=0.9, shear_range=[0.1, 0.1, 0.1]),
@@ -440,6 +441,10 @@ if __name__ == "__main__":
          RandZoomd(keys=["img_50", "img_70", "img_120", "seg"], mode=["bilinear", "bilinear", "bilinear", "nearest"],
                    prob=1.0, min_zoom=0.9, max_zoom=1.5),
          ScaleIntensityd(keys=["img_50", "img_70", "img_120"], minv=0.0, maxv=1.0)])
+    """
+    train_transforms = Compose([
+        ToTensord(keys=["img_50", "img_70", "img_120", "seg"]),
+        ScaleIntensityd(keys=["img_50", "img_70", "img_120"], minv=0.0, maxv=1.0)])
     
     energies = [50, 70, 120]
     IDs = ["25_HH57", "26_LB59", "29_MS42", "31_EM88", "32_EN56", "34_LO45"]
