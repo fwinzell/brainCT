@@ -246,6 +246,7 @@ class BrainXLDataset(Dataset):
         sind = index-self.slice_idxs[vol_idx]
         return self._transform(sind)
 
+
 class SpectralDataset(BrainXLDataset):
     def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None) -> None:
         super().__init__(dataurls, transform)
@@ -325,20 +326,48 @@ class VotingDataset(SpectralDataset):
         return apply_transform(self.transform, data_i) if self.transform is not None else data_i
 
 
-
-class HuggingDataset(BrainXLDataset):
+class BootstrappedDataset(BrainXLDataset):
     def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None) -> None:
         super().__init__(dataurls, transform)
+        self.samples = range(len(self))
+        self.bootstrap = self.samples
+
+    def resample(self):
+        self.bootstrap = np.random.choice(self.samples, len(self.samples), replace=True)
+        # Optional: Sort the bootstrap samples for speed up
+        self.bootstrap = np.sort(self.bootstrap)
 
     def __getitem__(self, index: int):
-        vol_idx = self._get_vol_idx(index)
+        sample = self.bootstrap[index]
+        vol_idx = self._get_vol_idx(sample)
         # Check that the current volume is correct, otherwise update
         if vol_idx != self.cached:
             self._load_data(self.urls[vol_idx])
             self.cached = vol_idx
-        sind = index - self.slice_idxs[vol_idx]
-        energy = int(self.urls[vol_idx][0].split("_")[-3][1:])
-        return self._transform(sind), energy
+        sind = sample - self.slice_idxs[vol_idx]
+        return self._transform(sind)
+
+
+class BootstrappedDatasetV3(VotingDataset):
+    def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None) -> None:
+        super().__init__(dataurls, transform)
+        self.samples = range(len(self))
+        self.bootstrap = self.samples
+
+    def resample(self):
+        self.bootstrap = np.random.choice(self.samples, len(self.samples), replace=True)
+        # Optional: Sort the bootstrap samples for speed up
+        self.bootstrap = np.sort(self.bootstrap)
+
+    def __getitem__(self, index: int):
+        sample = self.bootstrap[index]
+        vol_idx = self._get_vol_idx(sample)
+        # Check that the current volume is correct, otherwise update
+        if vol_idx != self.cached:
+            self._load_data(self.urls[vol_idx])
+            self.cached = vol_idx
+        sind = sample - self.slice_idxs[vol_idx]
+        return self._transform(sind)
 
 
 class WMGMDataset(BrainXLDataset):

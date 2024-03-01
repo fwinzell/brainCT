@@ -188,13 +188,13 @@ def eval3d(config, test_IDs, save=False, save_name="model"):
     loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, drop_last=False, num_workers=0)
 
     model = get_model(config)
-    model.load_state_dict(torch.load(os.path.join(model_path, 'best.pth')), strict=True)
+    model.load_state_dict(torch.load(os.path.join(model_path, 'last.pth')), strict=True)
     model.eval()
     binarize = AsDiscrete(threshold=0.5)
 
     dsc = Dice(zero_division=np.nan, ignore_index=0)  # DiceMetric(include_background=True)
     iou = JaccardIndex(task='binary')  # MeanIoU(include_background=True)
-    hdm = HausdorffDistanceMetric(include_background=True)
+    hdm = HausdorffDistanceMetric(include_background=True, percentile=95.0)
     dice_scores = np.zeros((len(loader), config.n_classes))
     iou_scores = np.zeros((len(loader), config.n_classes))
     hausdorff = np.zeros((len(loader), config.n_classes))
@@ -251,7 +251,7 @@ def save_output(model_name, out_vol, test_case):
 
 if __name__ == "__main__":
     save_dir = "/home/fi5666wi/Python/Brain-CT/saved_models"
-    model_name = "unet_att_2024-02-20/"
+    model_name = "unet_plus_plus_3d_2024-02-20/"
     model_path = os.path.join(save_dir, #'crossval_2024-01-23',
                               model_name, 'version_1')
 
@@ -267,7 +267,7 @@ if __name__ == "__main__":
     config.sigmoid = False
     config.model_name = model_name
     if config.use_3d_input and config.model != "unet":
-       config.model = "unet_att"
+       config.model = "unet_plus_plus_3d"
 
     # Removed due to insufficient quality on MRI image
     # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42

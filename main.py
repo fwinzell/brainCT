@@ -7,7 +7,7 @@ from torchsummary import summary
 
 from monai.networks.nets import AttentionUnet, UNETR, BasicUNetPlusPlus  # , UNet
 from unets import UNet, UNet3d_AG, UNet_PlusPlus4
-from torchProject.unet.unet_model import UNetModel
+#from torchProject.unet.unet_model import UNetModel
 from pytorch_bcnn.models import BayesianUNet
 from monai.transforms import (
     Compose,
@@ -97,13 +97,6 @@ def get_model(config):
                          strides=(2, 2, 2, 2),
                          kernel_size=3,
                          up_kernel_size=3)
-    elif config.model == "unetmod":
-        return UNetModel(
-            input_dim=[256, 256, 3],
-            num_classes=config.n_classes,
-            depth=4,
-            filters=16
-        )
     elif config.model == "unet_plus_plus":
         return BasicUNetPlusPlus(
             spatial_dims=2,
