@@ -4,8 +4,8 @@ from torchsummary import summary
 from collections.abc import Sequence
 import numpy as np
 
-from utils import ConvLayer, SkipConnection, ParallelConnection, DoubleSkipConnection
-from unets import EncoderBlock, DecoderBlock, InputBlock3d
+from .utils import ConvLayer, SkipConnection, ParallelConnection, DoubleSkipConnection
+from .unets import EncoderBlock, DecoderBlock, InputBlock3d
 
 device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 
@@ -262,8 +262,13 @@ if __name__ == "__main__":
                 strides=(2, 2, 4, 4),
                 kernel_size=3,
                 up_kernel_size=3,
-                use_3d_input=False,
+                use_3d_input=True,
                 out_channels_3d=8)
 
+    summary(model.to(device), (3, 3, 256, 256))
 
-    summary(model.to(device), (3, 256, 256))
+    example_input_array = torch.rand(4, 3, 3, 256, 256).to(device)
+    seg, recon = model(example_input_array)
+    print(seg.shape)
+
+

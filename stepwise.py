@@ -10,12 +10,10 @@ from monai.transforms import (
     ScaleIntensityd,
     AsDiscrete
 )
-from monai.networks.nets import UNet
 from torchmetrics import Dice, JaccardIndex
 
-from inference import display_result
 from main import parse_config, get_model
-from data_loader import InfDataset
+from brainCT.train_utils.data_loader import InfDataset
 
 
 def eval(model_paths, test_cases):

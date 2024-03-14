@@ -130,61 +130,48 @@ class BrainDataset(Dataset):
         return self._transform(index)
 
 
-class SpectralDatasetLight(Dataset):
+class SimpleBrainDataset(Dataset):
     def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None) -> None:
-        img_50, img_70, img_120, seg = None, None, None, None
-        for j,k in enumerate(dataurls):
-            indxs = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(k[3])), 0)
-            cimg_50 = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(k[0])), 0)
-            cimg_70 = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(k[1])), 0)
-            cimg_120 = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(k[2])), 0)
+        self.urls = dataurls
+        self.transform = transform
+        self.data = None
+        self.cached = -1
 
-            valid_slices = np.argwhere(np.squeeze(indxs).sum(axis=2).sum(axis=1) > 0)
-            cimg_50 = cimg_50[:, valid_slices[:, 0], :, :]
-            cimg_70 = cimg_70[:, valid_slices[:, 0], :, :]
-            cimg_120 = cimg_120[:, valid_slices[:, 0], :, :]
-            indxs = indxs[:, valid_slices[:, 0], :, :]
+    def __len__(self):
+        return len(self.urls)*256
 
-            CSF = indxs == 3
-            GM = indxs == 2
-            WM = indxs == 1
-            cseg = np.concatenate((WM, GM, CSF), axis=0)
+    def _load_data(self, url):
+        indxs = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(url[1])), 0)
+        img = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(url[0])), 0)
 
-            if j == 0:
-                img_50, img_70, img_120 = cimg_50, cimg_70, cimg_120
-                seg = cseg
-            else:
-                img_50 = np.concatenate((img_50, cimg_50), axis=1)
-                img_70 = np.concatenate((img_70, cimg_70), axis=1)
-                img_120 = np.concatenate((img_120, cimg_120), axis=1)
-                seg = np.concatenate((seg, cseg), axis=1)
+        CSF = indxs == 3
+        GM = indxs == 2
+        WM = indxs == 1
 
-        img_50[img_50 < 0] = 0
-        img_50[img_50 > 100] = 100
-        img_70[img_70 < 0] = 0
-        img_70[img_70 > 100] = 100
-        img_120[img_120 < 0] = 0
-        img_120[img_120 > 100] = 100
-        images = {"img_50": (img_50 - 30.0) / 5.0,
-                  "img_70": (img_70 - 30.0) / 5.0,
-                  "img_120": (img_120 - 30.0) / 5.0,
-                  "seg": seg.astype(np.uint8)}
-        super().__init__(images, transform)
+        seg = np.concatenate((WM, GM, CSF), axis=0)
+        img[img < 0] = 0
+        img[img > 100] = 100
+        self.data = {"img": (img - 30.0) / 5.0, "seg": seg.astype(np.uint8)}
 
-    def __len__(self) -> int:
-        return self.data["img_50"].shape[1]
 
-    def __getitem__(self, index: int):
+    def _transform(self, index: int):
         # Fetch single data item from `self.data`.
 
-        img50 = np.expand_dims(self.data["img_50"][0, index, :, :], 0)
-        img70 = np.expand_dims(self.data["img_70"][0, index, :, :], 0)
-        img120 = np.expand_dims(self.data["img_120"][0, index, :, :], 0)
-        imgblock = np.concatenate((img50, img70, img120), axis=0)
+        imgblock = self.data["img"][:, index, :, :]
         segblock = self.data["seg"][:, index, :, :]
         data_i = {"img": imgblock, "seg": segblock}
 
         return apply_transform(self.transform, data_i) if self.transform is not None else data_i
+
+    def __getitem__(self, index: int):
+        vol_idx = np.floor(index / 256)
+        # Check that the current volume is correct, otherwise update
+        if vol_idx != self.cached:
+            self._load_data(self.urls[vol_idx])
+            self.cached = vol_idx
+        sind = index - vol_idx*256
+        return self._transform(sind)
+
 
 
 class BrainXLDataset(Dataset):
@@ -245,6 +232,25 @@ class BrainXLDataset(Dataset):
             self.cached = vol_idx
         sind = index-self.slice_idxs[vol_idx]
         return self._transform(sind)
+
+class BasicBrainDataset(BrainXLDataset):
+    def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None) -> None:
+        super().__init__(dataurls, transform)
+
+    def _preprocess(self):
+        n_slices = [0]
+        for f in self.urls:
+            indxs = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(f[-1])), 0)
+            valid_slices = np.argwhere(np.squeeze(indxs).sum(axis=2).sum(axis=1) > 0)
+            n_slices.append(valid_slices.shape[0])
+        return np.cumsum(n_slices)
+
+    def _transform(self, index: int):
+        imgblock = self.data["img"][:, index, :, :]
+        segblock = self.data["seg"][:, index, :, :]
+        data_i = {"img": imgblock, "seg": segblock}
+
+        return apply_transform(self.transform, data_i) if self.transform is not None else data_i
 
 
 class SpectralDataset(BrainXLDataset):
@@ -322,6 +328,65 @@ class VotingDataset(SpectralDataset):
         imgblock_120 = self.data["img_120"][0, index:index + 3, :, :]
         segblock = self.data["seg"][:, index + 1, :, :]
         data_i = {"img_50": imgblock_50, "img_70": imgblock_70, "img_120": imgblock_120,  "seg": segblock}
+
+        return apply_transform(self.transform, data_i) if self.transform is not None else data_i
+
+
+class ConcatDataset(VotingDataset):
+    def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None) -> None:
+        super().__init__(dataurls, transform)
+
+    def _transform(self, index: int):
+        # Fetch single data item from `self.data`.
+
+        imgblock_50 = self.data["img_50"][0, index:index + 3, :, :]
+        imgblock_70 = self.data["img_70"][0, index:index + 3, :, :]
+        imgblock_120 = self.data["img_120"][0, index:index + 3, :, :]
+        imgblock = np.concatenate((imgblock_50, imgblock_70, imgblock_120), axis=0)
+        segblock = self.data["seg"][:, index + 1, :, :]
+        data_i = {"img": imgblock, "seg": segblock}
+
+        return apply_transform(self.transform, data_i) if self.transform is not None else data_i
+
+
+
+class MultiModalDataset(VotingDataset):
+    def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None) -> None:
+        super().__init__(dataurls, transform)
+
+    def _load_data(self, url):
+        indxs = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(url[-1])), 0)
+        valid_slices = np.argwhere(np.squeeze(indxs).sum(axis=2).sum(axis=1) > 0)
+        indxs = indxs[:, valid_slices[:, 0], :, :]
+
+        CSF = indxs == 3
+        GM = indxs == 2
+        WM = indxs == 1
+        seg = np.concatenate((WM, GM, CSF), axis=0)
+
+        imgs = []
+        for i in range(3):
+            img = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(url[i])), 0)
+            img = img[:, valid_slices[:, 0], :, :]
+            img[img < 0] = 0
+            img[img > 100] = 100
+            imgs.append((img - 30.0) / 5.0)
+
+        mri = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(url[3])), 0)
+        mri = mri[:, valid_slices[:, 0], :, :]
+
+        self.data = {"img_50": imgs[0], "img_70": imgs[1], "img_120": imgs[2], "mri": mri, "seg": seg.astype(np.uint8)}
+
+    def _transform(self, index: int):
+        # Fetch single data item from `self.data`.
+
+        imgblock_50 = self.data["img_50"][0, index:index + 3, :, :]
+        imgblock_70 = self.data["img_70"][0, index:index + 3, :, :]
+        imgblock_120 = self.data["img_120"][0, index:index + 3, :, :]
+        mriblock = self.data["mri"][:, index + 1, :, :]
+        segblock = self.data["seg"][:, index + 1, :, :]
+        data_i = {"img_50": imgblock_50, "img_70": imgblock_70, "img_120": imgblock_120,
+                  "mri": mriblock, "seg": segblock}
 
         return apply_transform(self.transform, data_i) if self.transform is not None else data_i
 
@@ -472,20 +537,28 @@ if __name__ == "__main__":
          ScaleIntensityd(keys=["img_50", "img_70", "img_120"], minv=0.0, maxv=1.0)])
     """
     train_transforms = Compose([
-        ToTensord(keys=["img_50", "img_70", "img_120", "seg"]),
+        ToTensord(keys=["img_50", "img_70", "img_120", "mri", "seg"]),
         ScaleIntensityd(keys=["img_50", "img_70", "img_120"], minv=0.0, maxv=1.0)])
     
     energies = [50, 70, 120]
     IDs = ["25_HH57", "26_LB59", "29_MS42", "31_EM88", "32_EN56", "34_LO45"]
-    tr_cases = [[f"{datafolder}/{cid}_M{level}_l_T1.nii" for level in energies] + [f"{datafolder}/{cid}_seg3.nii"]
+    tr_cases = [[f"{datafolder}/{cid}_M{level}_l_T1.nii" for level in energies]
+                + [f"{datafolder}/{cid}_T1.nii", f"{datafolder}/{cid}_seg3.nii"]
                 for cid in IDs[3:]]
 
-    train_datset = VotingDataset(tr_cases, train_transforms)
+    one_case_per_seg = []
+    for level in energies:
+        one_case_per_seg += [(f"{datafolder}/{cid}_M{level}_l_T1.nii", f"{datafolder}/{cid}_seg3.nii") for cid in IDs[3:]]
+
+    brainset = SimpleBrainDataset(one_case_per_seg, train_transforms)
+
+    train_datset = MultiModalDataset(tr_cases, train_transforms)
     loader = DataLoader(train_datset, batch_size=2, shuffle=False, num_workers=0)
     for i,batte in enumerate(loader):
         img_50 = batte["img_50"].numpy()
         img_70 = batte["img_70"].numpy()
         img_120 = batte["img_120"].numpy()
+        mri = batte["mri"].numpy()
         seg = batte["seg"].numpy()
         print(f"Loaded {i}")
 
@@ -497,10 +570,12 @@ if __name__ == "__main__":
         im50 = np.uint8(((im50-np.min(im50)) / np.max(im50)) * 255)
         im70 = np.uint8(((im70 - np.min(im70)) / np.max(im70)) * 255)
         im120 = np.uint8(((im120 - np.min(im120)) / np.max(im120)) * 255)
+        mri = np.moveaxis(mri[0], source=0, destination=-1)
         seg = np.moveaxis(np.uint8(seg[0] * 255), source=0, destination=-1)
         cv2.imshow('50keV', im50[:, :, 1])
         cv2.imshow('70keV', im70[:, :, 1])
         cv2.imshow('120keV', im120[:, :, 1])
+        cv2.imshow('MRI', mri)
         cv2.imshow('Target', seg)
         # cv2.imshow('Border', border)
         cv2.waitKey(0)
@@ -540,55 +615,6 @@ if __name__ == "__main__":
         cv2.imshow('Target', seg)
         #cv2.imshow('Border', border)
         cv2.waitKey(500)
-
-    
-
-    energies = [70, 120]
-
-    IDs = ["1_Bn52", "4_Jk77", "5_Kg40", "6_Mbr57", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
-           "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39"]
-
-    #tr_cases = []
-    #for level in energies:
-    #    tr_cases += [(f"{datafolder}/{cid}_M{level}_l_T1.nii", f"{datafolder}/{cid}_seg3.nii") for cid in IDs[3:]]
-    wmgm_cases = [(f"{datafolder}/{cid}_M120_l_T1.nii", f"{datafolder}/{cid}_seg3.nii") for cid in IDs[3:]]
-
-    mask_cases = [(f"{datafolder}/{cid}_M70_l_T1.nii", f"{datafolder}/{cid}_seg3.nii") for cid in IDs[3:]]
-
-    tr_cases = [[f"{datafolder}/{cid}_M{level}_l_T1.nii" for level in energies] + [f"{datafolder}/{cid}_seg3.nii"]
-                for cid in IDs[3:]]
-
-    train_transforms_1 = Compose(
-        [RandAffined(keys=["img", "seg"], mode=["bilinear", "nearest"], prob=0.9, shear_range=[(0.1), (0.1), (0.1)]),
-         ToTensord(keys=["img", "seg"]),
-         RandGaussianSmoothd(keys="img", prob=0.5, sigma_x=(0.2, 2.0), sigma_y=(0.2, 2.0), sigma_z=(0.5, 1.5)),
-         ScaleIntensityd(keys="img", minv=0.0, maxv=1.0)])
-
-    train_transforms_2 = Compose([
-        # RandAffined(keys=["img", "seg"], mode=["bilinear", "nearest"], prob=0.9, shear_range=[(0.1), (0.1), (0.1)]),
-        ToTensord(keys=["img_70", "img_120", "seg"]),
-        # RandGaussianNoised(keys="img", prob=0.5, mean=0.0, std=0.1),
-        # RandGaussianSmoothd(keys="img", prob=1.0, sigma_x=(0.1, 2.5), sigma_y=(0.1, 2.5), sigma_z=(1,2))
-    ScaleIntensityd(keys=["img_70", "img_120"], minv=0.0, maxv=1.0)])
-
-    train_dataset = MaskDataset(mask_cases, train_transforms_1)
-    wmgm_dataset = WMGMDataset(wmgm_cases, train_transforms_1)
-
-    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=0)
-    print(len(train_loader))
-    for i, batch in enumerate(train_loader):
-        img = batch["img"].numpy()
-        seg = batch["seg"].numpy()
-
-        img = np.moveaxis(np.uint8(img[:, 0, :, :]*255), source=0, destination=-1)
-        #print(f"Max: {np.max(img[:, :, 1])} Min: {np.min(img[:, :, 1])}")
-        seg = np.concatenate((seg[0], np.zeros((1, 256, 256))), axis=0)
-        seg = np.moveaxis(np.uint8(seg * 255), source=0, destination=-1)
-        cv2.imshow('Image', img)
-        cv2.imshow('Target', seg)
-        # cv2.imshow('Border', border)
-        cv2.waitKey(500)
-
     """
 
 

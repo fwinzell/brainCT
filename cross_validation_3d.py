@@ -4,30 +4,26 @@ import argparse
 import datetime
 import numpy as np
 import random
-from torchsummary import summary
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import pandas as pd
-from random import randint
 
-from unets import UNet, UNet3d_AG, UNet_PlusPlus4
+from brainCT.networks.unets import UNet, UNet3d_AG, UNet_PlusPlus4
 from monai.transforms import (
     Compose,
     ToTensord,
     RandAffined,
     ScaleIntensityd,
     RandGaussianSmoothd,
-    RandAdjustContrastd,
-    RandGibbsNoised,
     RandZoomd,
     AsDiscrete
 )
 
 from torchmetrics import Dice, JaccardIndex
 
-from data_loader import BrainXLDataset, VotingDataset
-from modules import SegModule3d
-from main import seed_torch, get_model
+from brainCT.train_utils.data_loader import VotingDataset
+from brainCT.train_utils.modules import SegModule3d
+from main import seed_torch
 
 os.environ['PYDEVD_USE_CYTHON'] = 'NO'
 os.environ['PYDEVD_USE_FRAME_EVAL'] = 'NO'

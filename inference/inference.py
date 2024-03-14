@@ -16,12 +16,13 @@ from monai.metrics import HausdorffDistanceMetric
 import SimpleITK as sitk
 
 #from modules import SegModule
-from main import parse_config, get_model
-from data_loader import Dataset2hD, BrainDataset, SpectralDataset, BrainXLDataset, VotingDataset, WMGMDataset
+from brainCT.main import parse_config, get_model
+from brainCT.train_utils.data_loader import (Dataset2hD, BrainDataset, SpectralDataset, BrainXLDataset, VotingDataset,
+                                             ConcatDataset)
 from display import display_result
 
 
-def eval(config, test_IDs, save=False, level=70, save_name="model"):
+def eval(config, test_IDs, save=False, level=70, save_name="model", display=True):
     transforms = Compose(
         [ToTensord(keys=["img", "seg"]),
          ScaleIntensityd(keys="img", minv=0.0, maxv=1.0)])
@@ -43,8 +44,10 @@ def eval(config, test_IDs, save=False, level=70, save_name="model"):
 
     dsc = Dice(zero_division=np.nan, ignore_index=0)  # DiceMetric(include_background=True)
     iou = JaccardIndex(task='binary')  # MeanIoU(include_background=True)
+    hdm = HausdorffDistanceMetric(include_background=True, percentile=95.0)
     dice_scores = np.zeros((len(loader), config.n_classes))
     iou_scores = np.zeros((len(loader), config.n_classes))
+    hausdorff = np.zeros((len(loader), config.n_classes))
 
     if save:
         out_vol = np.zeros((config.n_classes, len(loader), 256, 256))
@@ -56,7 +59,7 @@ def eval(config, test_IDs, save=False, level=70, save_name="model"):
                 output = output[0]
             # Metrics
             y_pred = binarize(torch.sigmoid(output))
-            if torch.count_nonzero(label) != 0:
+            if torch.count_nonzero(label) != 0 and display:
                 display_result(y_pred, label,  wait=1, n_classes=3)
 
             if save:
@@ -67,12 +70,16 @@ def eval(config, test_IDs, save=False, level=70, save_name="model"):
                 tar = label[0, i, :, :]
                 dice_scores[k, i] = dsc(pred.to(torch.uint8), tar).item()
                 iou_scores[k, i] = iou(pred.to(torch.uint8), tar).item()
+            hausdorff[k,] = hdm(y_pred=y_pred, y=label, spacing=1)
 
     dice_scores = np.nanmean(dice_scores, axis=0)
     # iou_scores = iou_scores[~np.isnan(iou_scores)]
     iou_scores = np.nanmean(iou_scores, axis=0)
+    hausdorff[np.isinf(hausdorff)] = np.nan  # Remove inf values
+    h_distances = np.nanmean(hausdorff, axis=0)
     print(f"Dice scores (WM/GM/CSF): {np.around(dice_scores, decimals=4)}")
     print(f"IoU scores (WM/GM/CSF): {np.around(iou_scores, decimals=4)}")
+    print(f"Hausdorff distance (WM/GM/CSF): {np.around(h_distances, decimals=4)}")
     if save:
         save_output(save_name, out_vol, test_cases[0][0])
 
@@ -125,56 +132,7 @@ def eval_with_voting(config, test_IDs):
     print(f"IoU scores (WM/GM/CSF): {np.around(iou_scores, decimals=4)}")
 
 
-def eval_wmgm(config, test_cases):
-    transforms = Compose(
-        [ToTensord(keys=["img", "seg"]),
-         ScaleIntensityd(keys="img", minv=0.0, maxv=1.0)])
-
-    dataset = WMGMDataset(test_cases, transforms)
-    loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, drop_last=False, num_workers=0)
-
-    model = get_model(config)
-    model.load_state_dict(torch.load(os.path.join(model_path, 'last.pth')), strict=True)
-    model.eval()
-    binarize = AsDiscrete(threshold=0.5)
-
-    dsc = Dice(zero_division=np.nan, ignore_index=0)  # DiceMetric(include_background=True)
-    iou = JaccardIndex(task='binary')  # MeanIoU(include_background=True)
-    dice_scores = np.zeros(len(loader))
-    iou_scores = np.zeros(len(loader))
-
-    for k, batch in enumerate(loader):
-        input, label = (batch["img"], batch["seg"])
-        with torch.no_grad():
-            output = model(input)
-            if type(output) == list:
-                output = output[0]
-            # Metrics
-            y_pred = binarize(torch.sigmoid(output))
-            if torch.count_nonzero(label) != 0:
-                pred_img = np.zeros((256, 256, 3), dtype=np.uint8)
-                corr = np.logical_and(y_pred, label).squeeze()
-                pred_img[corr, :] = [0, 255, 0]
-                incorr = np.logical_xor(y_pred, label).squeeze()
-                pred_img[incorr, :] = [0, 0, 255]
-
-                cv2.imshow('Correct/incorrect', pred_img)
-                cv2.waitKey(100)
-
-                dice_scores[k] = dsc(y_pred.to(torch.uint8), label).item()
-                iou_scores[k] = iou(y_pred.to(torch.uint8), label).item()
-
-    dice_scores = np.nanmean(dice_scores, axis=0)
-    # iou_scores = iou_scores[~np.isnan(iou_scores)]
-    iou_scores = np.nanmean(iou_scores, axis=0)
-    print(f"Dice score: {np.around(dice_scores, decimals=4)}")
-    print(f"IoU score: {np.around(iou_scores, decimals=4)}")
-
-
-def eval3d(config, test_IDs, save=False, save_name="model"):
-    transforms = Compose(
-        [ToTensord(keys=["img_50", "img_70", "img_120", "seg"]),
-         ScaleIntensityd(keys=["img_50", "img_70", "img_120"], minv=0.0, maxv=1.0)])
+def eval3d(config, test_IDs, save=False, save_name="model", concat=False):
 
     if save and len(test_IDs) != 1:
         print(f"Only one test case can be saved at a time, defaulting to {test_IDs[0]}.")
@@ -184,7 +142,16 @@ def eval3d(config, test_IDs, save=False, save_name="model"):
     test_cases = [[f"{datafolder}/{cid}_M{level}_l_T1.nii" for level in energies] + [f"{datafolder}/{cid}_seg3.nii"]
                   for cid in test_IDs]
 
-    dataset = VotingDataset(test_cases, transforms)
+    if concat:
+        transforms = Compose(
+            [ToTensord(keys=["img", "seg"]),
+             ScaleIntensityd(keys=["img"], minv=0.0, maxv=1.0)])
+        dataset = ConcatDataset(test_cases, transforms)
+    else:
+        transforms = Compose(
+            [ToTensord(keys=["img_50", "img_70", "img_120", "seg"]),
+             ScaleIntensityd(keys=["img_50", "img_70", "img_120"], minv=0.0, maxv=1.0)])
+        dataset = VotingDataset(test_cases, transforms)
     loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, drop_last=False, num_workers=0)
 
     model = get_model(config)
@@ -201,7 +168,10 @@ def eval3d(config, test_IDs, save=False, save_name="model"):
 
     out_vol = np.zeros((config.n_classes, len(loader), 256, 256))
     for k, batch in enumerate(loader):
-        imgs = torch.stack([batch["img_50"], batch["img_70"], batch["img_120"]], dim=1)
+        if concat:
+            imgs = batch["img"]
+        else:
+            imgs = torch.stack([batch["img_50"], batch["img_70"], batch["img_120"]], dim=1)
         label = batch["seg"]
         with torch.no_grad():
             output = model(imgs)
@@ -251,7 +221,7 @@ def save_output(model_name, out_vol, test_case):
 
 if __name__ == "__main__":
     save_dir = "/home/fi5666wi/Python/Brain-CT/saved_models"
-    model_name = "unet_plus_plus_3d_2024-02-20/"
+    model_name = "unet_plus_plus_2024-02-16/"
     model_path = os.path.join(save_dir, #'crossval_2024-01-23',
                               model_name, 'version_1')
 
@@ -259,12 +229,10 @@ if __name__ == "__main__":
         with open(os.path.join(model_path, 'config.yaml'), "r") as f:
             config = yaml.safe_load(f)
             config = Namespace(**config)
-            config.use_3d_input = True
     else:
         config = parse_config()
 
     datafolder = os.path.join(config.base_dir, 'DL')
-    config.sigmoid = False
     config.model_name = model_name
     if config.use_3d_input and config.model != "unet":
        config.model = "unet_plus_plus_3d"
@@ -276,7 +244,7 @@ if __name__ == "__main__":
            "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39",
            "25_HH57", "28_LO45", "27_IL48", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"]  # 3mm
 
-    eval3d(config, test_IDs, save=False) #, save_name="crossval_2024-01-24_v4")
-    #eval(config, test_IDs, save=False) #save_name="crossval_2024-01-16_v4")
+    #eval3d(config, test_IDs, save=False, concat=True) #, save_name="crossval_2024-01-24_v4")
+    eval(config, test_IDs, save=False, display=False) #save_name="crossval_2024-01-16_v4")
     #eval_with_voting(config, test_IDs)
 

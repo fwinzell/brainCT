@@ -5,7 +5,7 @@ from monai.networks.nets import AttentionUnet, BasicUNetPlusPlus
 from collections.abc import Sequence
 import numpy as np
 
-from utils import ConvLayer, SkipConnection, SeparableConv2d, AttentionBlock, AttentionLayer, PlusUpBlock, PlusDownBlock
+from brainCT.networks.utils import ConvLayer, SkipConnection, SeparableConv2d, AttentionBlock, AttentionLayer, PlusUpBlock, PlusDownBlock
 
 device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 
@@ -817,7 +817,7 @@ if __name__ == "__main__":
     unet = UNet(spatial_dims=2,
                 in_channels=3,
                 out_channels=3,
-                channels=(24, 48, 96, 192, 384),
+                channels=(16, 32, 64, 128, 256),
                 strides=(2, 2, 2, 2),
                 kernel_size=3,
                 up_kernel_size=3,

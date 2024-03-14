@@ -6,7 +6,7 @@ import numpy as np
 from torchsummary import summary
 
 from monai.networks.nets import AttentionUnet, UNETR, BasicUNetPlusPlus  # , UNet
-from unets import UNet, UNet3d_AG, UNet_PlusPlus4
+from brainCT.networks.unets import UNet, UNet3d_AG, UNet_PlusPlus4
 #from torchProject.unet.unet_model import UNetModel
 from pytorch_bcnn.models import BayesianUNet
 from monai.transforms import (
@@ -17,8 +17,8 @@ from monai.transforms import (
     RandGaussianSmoothd
 )
 
-from data_loader import Dataset2hD, BrainDataset, SpectralDataset, BrainXLDataset, VotingDataset
-from modules import SegModule, SegModule3d
+from brainCT.train_utils.data_loader import BrainXLDataset, VotingDataset, ConcatDataset
+from brainCT.train_utils.modules import SegModule, SegModule3d
 
 os.environ['PYDEVD_USE_CYTHON'] = 'NO'
 os.environ['PYDEVD_USE_FRAME_EVAL'] = 'NO'
@@ -35,15 +35,17 @@ print(torch.__version__)
 def parse_config():
     parser = argparse.ArgumentParser("argument for run segmentation pipeline")
 
-    parser.add_argument("--model", type=str, default="unet_att",
+    parser.add_argument("--model", type=str, default="unet_plus_plus",
                         help="unet, unet_plus_plus, unetr, attention_unet, bayesian_unet")
+    parser.add_argument("--sigmoid", type=bool, default=True,
+                        help="True for MONAI models, False for UNet++4 and UNet3D_AG")
     parser.add_argument("--n_classes", type=int, default=3, help="2 for only WM and GM, 3 if CSF is included")
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("-e", "--epochs", type=int, default=99)
     parser.add_argument("--num_folds", type=int, default=6)  # For cross-validation
     parser.add_argument("--input_shape", nargs=3, type=int, default=[3, 256, 256])
     parser.add_argument("--learning_rate", type=float, default=0.01) # prev 0.01
-    parser.add_argument("--class_weights", nargs=3, type=float, default=[0.87521193, 0.85465177, 10.84828136])
+    parser.add_argument("--class_weights", nargs=3, type=float, default=None) #[0.87521193, 0.85465177, 10.84828136])
     # [0.87521193,  0.85465177, 10.84828136] 1E7/total_volumes
     # [ 0.2663065 ,  0.25394151, 40.91449388] N^2/(total_volumes^2 * 1E4)
 
@@ -58,7 +60,7 @@ def parse_config():
     parser.add_argument('--seed', type=int, default=2,
                         help='random seed for reproducible experiment (default: 1)')
 
-    parser.add_argument('--use_3d_input', type=bool, default=True)
+    parser.add_argument('--use_3d_input', type=bool, default=False)
 
     args = parser.parse_args()
     return args
@@ -149,7 +151,7 @@ def train_unet(config):
     datafolder = os.path.join(config.base_dir, 'DL')
     energies = [50, 70, 120]
 
-    one_case_per_seg = True
+    one_case_per_seg = False
 
     # Removed due to insufficient quality on MRI image
     # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
@@ -157,6 +159,9 @@ def train_unet(config):
     IDs = ["5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
            "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39",
             "25_HH57", "28_LO45", "27_IL48", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"] # 3mm
+
+    perm = torch.randperm(len(IDs))
+    IDs = [IDs[i] for i in perm]
 
     if one_case_per_seg:
         tr_cases, val_cases = [], []
@@ -182,8 +187,8 @@ def train_unet(config):
         train_dataset = BrainXLDataset(tr_cases, train_transforms)
         val_dataset = BrainXLDataset(val_cases, val_transforms)
     else:
-        train_dataset = VotingDataset(tr_cases, train_transforms)
-        val_dataset = VotingDataset(val_cases, val_transforms)
+        train_dataset = ConcatDataset(tr_cases, train_transforms)
+        val_dataset = ConcatDataset(val_cases, val_transforms)
 
     unet = get_model(config).to(device)
 
@@ -204,10 +209,10 @@ def train_unet(config):
         save_dir=os.path.join(config.save_dir, save_name),
         classes=["wm", "gm", "csf"][:config.n_classes],
         loss="dice",
-        sigmoid=True # should be True for MONAI models, and U-Net, False for UNet++ and UNet3D_AG
+        sigmoid=config.sigmoid  # should be True for MONAI models, and U-Net, False for UNet++ and UNet3D_AG
     )
 
-    summary(unet.to(device), tuple(config.input_shape))
+    #summary(unet.to(device), tuple(config.input_shape))
 
     module.train()
     module.save_config(config)  # to .yaml file
@@ -223,6 +228,9 @@ def train_unet3d(config):
     IDs = ["5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
            "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39",
            "25_HH57", "28_LO45", "27_IL48", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"]  # 3mm
+
+    perm = torch.randperm(len(IDs))
+    IDs = [IDs[i] for i in perm]
 
     tr_cases = [[f"{datafolder}/{cid}_M{level}_l_T1.nii" for level in energies] + [f"{datafolder}/{cid}_seg3.nii"]
                 for cid in IDs[3:]]
@@ -265,7 +273,7 @@ def train_unet3d(config):
             classes=["wm", "gm", "csf"][:config.n_classes],
             loss="dice",
             lr_schedule="none",
-            sigmoid=False,
+            sigmoid=config.sigmoid,
             class_weights=config.class_weights,
         )
 

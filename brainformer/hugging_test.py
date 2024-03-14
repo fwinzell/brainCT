@@ -11,7 +11,7 @@ from monai.data import DataLoader
 
 import sys
 sys.path.append("/usr/matematik/fi5666wi/Python/brainCT")
-from brainCT.data_loader import HuggingDataset
+from brainCT.train_utils.data_loader import HuggingDataset
 
 import torch
 import torch.nn as nn

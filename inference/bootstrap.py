@@ -17,8 +17,8 @@ from torchmetrics import Dice, JaccardIndex
 from monai.metrics import HausdorffDistanceMetric
 import SimpleITK as sitk
 
-from main import parse_config, get_model
-from data_loader import BootstrappedDataset, BootstrappedDatasetV3
+from brainCT.main import parse_config, get_model
+from brainCT.train_utils.data_loader import BootstrappedDataset, BootstrappedDatasetV3
 from monai.data import DataLoader
 
 from tqdm import tqdm
@@ -54,7 +54,7 @@ def bootstrap3d(config, test_IDs, iterations=1000):
 
     dsc = Dice(zero_division=np.nan, ignore_index=0)  # DiceMetric(include_background=True)
     iou = JaccardIndex(task='binary')  # MeanIoU(include_background=True)
-    hdm = HausdorffDistanceMetric(include_background=True)
+    hdm = HausdorffDistanceMetric(include_background=True, percentile=95.0)
 
     results = {"Dice": np.zeros((iterations, config.n_classes)),
                "IoU": np.zeros((iterations, config.n_classes)),
@@ -203,7 +203,7 @@ def get_args():
     parser.add_argument("--model", "-m", type=str, default="unet_plus_plus",
                         help="unet, unet_plus_plus, unet_plus_plus_3d, unet_att")
     parser.add_argument("--model_name", type=str, default="unet_plus_plus_2024-02-16/")
-    parser.add_argument("--version", "-v",  type=int, default=1)
+    parser.add_argument("--version", "-v",  type=int, default=0)
 
     parser.add_argument('--use_3d_input', type=bool, default=False)
     parser.add_argument('--sigmoid', type=bool, default=False)
