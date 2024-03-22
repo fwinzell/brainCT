@@ -29,13 +29,15 @@ class SegModule(object):
                  loss="dice",
                  sigmoid=True,
                  class_weights=None,
-                 lr_schedule="multistep"):
+                 lr_schedule="multistep",
+                 start_ep=0):
         super().__init__()
 
         self.batch_size = batch_size
         self.max_epochs = max_epochs
         self.lr = learning_rate
         self.lr_schedule = lr_schedule
+        self.start_ep = start_ep
         self.model = model
         self.tr_dataset = train_data
         self.val_dataset = val_data
@@ -165,7 +167,7 @@ class SegModule(object):
 
     # Returns True if training was completed, false if aborted
     def train(self):
-        for epoch in range(self.max_epochs):
+        for epoch in range(self.start_ep, self.max_epochs):
             total_loss = 0
             self.model.train()
             tr_loop = tqdm(self.tr_loader)
@@ -195,10 +197,10 @@ class SegModule(object):
             else:
                 self.scheduler.step()
             if self.abort:
-                return False
+                return False, epoch
 
         torch.save(self.model.state_dict(), os.path.join(self.save_dir, 'last.pth'))
-        return True
+        return True, epoch
 
     def validate(self, ep):
         self.model.eval()

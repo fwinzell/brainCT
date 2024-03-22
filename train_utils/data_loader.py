@@ -164,7 +164,7 @@ class SimpleBrainDataset(Dataset):
         return apply_transform(self.transform, data_i) if self.transform is not None else data_i
 
     def __getitem__(self, index: int):
-        vol_idx = np.floor(index / 256)
+        vol_idx = int(np.floor(index / 256))
         # Check that the current volume is correct, otherwise update
         if vol_idx != self.cached:
             self._load_data(self.urls[vol_idx])
@@ -175,12 +175,16 @@ class SimpleBrainDataset(Dataset):
 
 
 class BrainXLDataset(Dataset):
-    def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None) -> None:
+    def __init__(self,
+                 dataurls: Sequence,
+                 transform: Optional[Callable] = None,
+                 n_pseudo: int = 3) -> None:
         self.urls = dataurls
         self.transform = transform
         self.slice_idxs = self._preprocess()
         self.data = None
         self.cached = -1
+        self.n_pseudo = n_pseudo if n_pseudo != 0 else 1
 
     def __len__(self):
         return self.slice_idxs[-1]
@@ -192,13 +196,18 @@ class BrainXLDataset(Dataset):
             indxs = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(f[-1])), 0)
             # cimg = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(k[0])), 0)
             valid_slices = np.argwhere(np.squeeze(indxs).sum(axis=2).sum(axis=1) > 0)
-            n_slices.append(valid_slices.shape[0] - 2) # -2 to account for last and first slice in 2.5D
+            n_slices.append(valid_slices.shape[0]) # EDIT -2 not needed anymore? -2 to account for last and first slice in 2.5D
         return np.cumsum(n_slices)
 
     def _load_data(self, url):
         indxs = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(url[1])), 0)
         img = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(url[0])), 0)
         valid_slices = np.argwhere(np.squeeze(indxs).sum(axis=2).sum(axis=1) > 0)
+        valid_slices = np.sort(valid_slices, axis=0)
+        k = np.floor(self.n_pseudo / 2).astype(int)
+        if k > 0:
+            valid_slices = np.insert(valid_slices, 0, valid_slices[:k] - k, axis=0)
+            valid_slices = np.insert(valid_slices, valid_slices.shape[0], valid_slices[-k:] + k, axis=0)
         img = img[:, valid_slices[:, 0], :, :]
         indxs = indxs[:, valid_slices[:, 0], :, :]
         CSF = indxs == 3
@@ -217,8 +226,9 @@ class BrainXLDataset(Dataset):
     def _transform(self, index: int):
         # Fetch single data item from `self.data`.
 
-        imgblock = self.data["img"][0, index:index + 3, :, :]
-        segblock = self.data["seg"][:, index + 1, :, :]
+        k = np.floor(self.n_pseudo / 2).astype(int)
+        imgblock = self.data["img"][0, index:index + self.n_pseudo, :, :]
+        segblock = self.data["seg"][:, index + k, :, :]
         data_i = {"img": imgblock, "seg": segblock}
 
         return apply_transform(self.transform, data_i) if self.transform is not None else data_i
@@ -550,7 +560,24 @@ if __name__ == "__main__":
     for level in energies:
         one_case_per_seg += [(f"{datafolder}/{cid}_M{level}_l_T1.nii", f"{datafolder}/{cid}_seg3.nii") for cid in IDs[3:]]
 
-    brainset = SimpleBrainDataset(one_case_per_seg, train_transforms)
+    #brainset = SimpleBrainDataset(one_case_per_seg, train_transforms)
+    bababooey = BrainXLDataset(one_case_per_seg,
+                               Compose([ToTensord(keys=["img", "seg"]),
+                                        ScaleIntensityd(keys=["img"], minv=0.0, maxv=1.0)]),
+                               n_pseudo=7)
+
+    loader = DataLoader(bababooey, batch_size=1, shuffle=False, num_workers=0)
+    for i,batte in enumerate(loader):
+        img = batte["img"].numpy()
+        seg = batte["seg"].numpy()
+
+        img = np.moveaxis(img[0], source=0, destination=-1)
+        seg = np.moveaxis(np.uint8(seg[0] * 255), source=0, destination=-1)
+        print(img.shape)
+        print(seg.shape)
+
+
+
 
     train_datset = MultiModalDataset(tr_cases, train_transforms)
     loader = DataLoader(train_datset, batch_size=2, shuffle=False, num_workers=0)

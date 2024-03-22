@@ -27,7 +27,7 @@ from brainCT.networks.unets import UNet
 
 from brainCT.train_utils.data_loader import SpectralDataset, BrainXLDataset
 from brainCT.train_utils.modules import SegModule
-from main import seed_torch
+from brainCT.main import seed_torch
 
 os.environ['PYDEVD_USE_CYTHON'] = 'NO'
 os.environ['PYDEVD_USE_FRAME_EVAL'] = 'NO'
@@ -43,7 +43,7 @@ def get_model(config):
     if config.model == "unet":
         return UNet(
             spatial_dims=2,
-            in_channels=3,
+            in_channels=config.n_pseudo,
             out_channels=config.n_classes,
             channels=tuple(config.features),
             strides=(2, 2, 2, 2),
@@ -56,7 +56,7 @@ def get_model(config):
     elif config.model == "unet_plus_plus":
         return BasicUNetPlusPlus(
             spatial_dims=2,
-            in_channels=3,
+            in_channels=config.n_pseudo,
             out_channels=config.n_classes,
             features=tuple(config.features),
             dropout=0.0)
@@ -68,21 +68,23 @@ def parse_config():
     parser = argparse.ArgumentParser("argument for run segmentation pipeline")
 
     parser.add_argument("--model", type=str, default="unet_plus_plus", help="unet, unet_plus_plus")
-    parser.add_argument("--features", nargs="+", type=int, default=[24, 48, 96, 192, 384, 48])
+    parser.add_argument("--features", nargs="+", type=int, default=[16, 32, 64, 128, 256, 32])
     # [16, 32, 64, 128, 256, 32] for UNet++ = 2.3M
+    # [24, 48, 96, 192, 384] for UNet = 3.7M
     # [24, 48, 96, 192, 384, 48] for UNet++ = 5.1M
     # [16, 32, 64, 128, 256] for UNet = 1.6M
-    # [24, 48, 96, 192, 384] for UNet = 3.7M
+
 
     parser.add_argument("--sigmoid", type=bool, default=True,
                         help="True for MONAI models, False for UNet++4 and UNet3D_AG")
     parser.add_argument("--n_classes", type=int, default=3, help="2 for only WM and GM, 3 if CSF is included")
+    parser.add_argument("--n_pseudo", type=int, default=13, help="Number of slices in psuedo 3D input")
 
     parser.add_argument("--only_70", type=bool, default=False, help="True if only 70 energy level is used")
-    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("-e", "--epochs", type=int, default=99)
     parser.add_argument("--num_folds", type=int, default=5)  # For cross-validation, 4 or 5 (without/with 3mm)
-    parser.add_argument("--input_shape", nargs=3, type=int, default=[3, 256, 256])
+    parser.add_argument("--input_shape", nargs=3, type=int, default=[256, 256])
     parser.add_argument("--learning_rate", type=float, default=1e-2)
     parser.add_argument("--shuffle", type=bool, default=True)
     parser.add_argument("--loss", type=str, default="dice", help="dice, gdl, tversky")
@@ -109,9 +111,19 @@ def parse_config():
 
 def train_model(config, save_dir, train_dataset, val_dataset):
     training_completed = False
+    first_run = True
+    eps = 0
     while not training_completed:
 
         unet = get_model(config)
+        start_epoch = 0
+
+        if not first_run:
+            path = os.path.join(save_dir, 'best.pth')
+            if os.path.exists(path):
+                unet.load_state_dict(torch.load(path))
+                print("Loaded model from previous run")
+                start_epoch = eps + 1
 
         module = SegModule(
             unet.to(device),
@@ -130,12 +142,14 @@ def train_model(config, save_dir, train_dataset, val_dataset):
             loss=config.loss,
             class_weights=config.class_weights,
             sigmoid=config.sigmoid,
-            lr_schedule="multistep"
+            lr_schedule="multistep",
+            start_ep= start_epoch
         )
 
-        summary(unet.to(device), tuple(config.input_shape))
+        summary(unet.to(device), tuple([config.n_pseudo, 256, 256]))
 
-        training_completed = module.train()
+        training_completed, eps = module.train()
+        first_run = False
     module.save_config(config)  # to .yaml file
 
     return module.model
@@ -221,8 +235,8 @@ def run_cross_val(config, spectral_mode=False, n_folds=4, one_level_per_case=Fal
             val_files = [[f"{datafolder}/{cid}_M{energies[1]}_l_T1.nii", f"{datafolder}/{cid}_seg3.nii"]
                          for cid in val_cases]
 
-            train_dataset = BrainXLDataset(tr_files, train_transforms)
-            val_dataset = BrainXLDataset(val_files, val_transforms)
+            train_dataset = BrainXLDataset(tr_files, train_transforms, n_pseudo=config.n_pseudo)
+            val_dataset = BrainXLDataset(val_files, val_transforms, n_pseudo=config.n_pseudo)
         else:
             # Use all levels, preferred
             tr_files, val_files = [], []
@@ -232,8 +246,8 @@ def run_cross_val(config, spectral_mode=False, n_folds=4, one_level_per_case=Fal
                 val_files += [(f"{datafolder}/{cid}_M{level}_l_T1.nii", f"{datafolder}/{cid}_seg3.nii")
                               for cid in val_cases]
 
-            train_dataset = BrainXLDataset(tr_files, train_transforms)
-            val_dataset = BrainXLDataset(val_files, val_transforms)
+            train_dataset = BrainXLDataset(tr_files, train_transforms, n_pseudo=config.n_pseudo)
+            val_dataset = BrainXLDataset(val_files, val_transforms, n_pseudo=config.n_pseudo)
 
         model = train_model(config, save_dir, train_dataset, val_dataset)
         cv_dice_scores[k, :], cv_iou_scores[k, :], cv_hausdorff[k, :] = validate(config, model, val_dataset)
@@ -243,12 +257,21 @@ def run_cross_val(config, spectral_mode=False, n_folds=4, one_level_per_case=Fal
     print(f"Mean IoU (WM/GM/CSF): {np.mean(cv_iou_scores, axis=0)} +/- ({np.std(cv_iou_scores, axis=0)})")
     print(f"Mean Hausdorff (WM/GM/CSF): {np.mean(cv_hausdorff, axis=0)} +/- ({np.std(cv_hausdorff, axis=0)})")
 
+    df = create_dataframe2(config, cv_dice_scores, cv_iou_scores, cv_hausdorff)
+    csv_path = "/home/fi5666wi/Python/Brain-CT/results_cross_val2.csv"
+    if os.path.exists(csv_path):
+        df.to_csv(csv_path, mode='a', header=False)
+    else:
+        df.to_csv(csv_path)
+
+    """
     df = create_dataframe(config, cv_dice_scores, cv_iou_scores, cv_hausdorff)
     csv_path = "/home/fi5666wi/Python/Brain-CT/results_cross_val.csv"
     if os.path.exists(csv_path):
         df.to_csv(csv_path, mode='a', header=False)
     else:
         df.to_csv(csv_path)
+    """
 
 
 def validate(config, model, val_dataset):
@@ -279,7 +302,7 @@ def validate(config, model, val_dataset):
                 tar = labels[0, i, :, :]
                 dice_scores[batch_idx, i] = dsc(pred.to(torch.uint8), tar).item()
                 iou_scores[batch_idx, i] = iou(pred.to(torch.uint8), tar).item()
-            hausdorff[batch_idx, ] = hdm(y_pred=y_pred, y=labels, spacing=1)
+            hausdorff[batch_idx, ] = hdm(y_pred=y_pred.detach().cpu(), y=labels.detach().cpu(), spacing=1)
 
             val_loop.set_description("Validation: ")
             val_loop.set_postfix(dsc=[np.round(t.item(), 4) for t in dice_scores[batch_idx, :]])
@@ -302,17 +325,36 @@ def create_dataframe(config, dices, ious, hds):
     }
 
     for i in range(config.num_folds):
-        data[f"Dice Score Fold {i+1}"] = np.mean(dices[i])
-        data[f"IoU Fold {i+1}"] = np.mean(ious[i])
-        data[f"Hausdorff Fold {i+1}"] = np.mean(hds[i])
+        data[f"Dice Score Fold {i+1}"] = np.round(np.mean(dices[i]),4)
+        data[f"IoU Fold {i+1}"] = np.round(np.mean(ious[i]),4)
+        data[f"Hausdorff Fold {i+1}"] = np.round(np.mean(hds[i]), 3)
 
     for j,c in enumerate(["WM", "GM", "CSF"]):
-        data[f"Dice Score {c}"] = np.mean(dices[:, j])
-        data[f"IoU {c}"] = np.mean(ious[:, j])
-        data[f"Hausdorff {c}"] = np.mean(hds[:, j])
+        data[f"Dice Score {c}"] = np.round(np.mean(dices[:, j]),4)
+        data[f"IoU {c}"] = np.round(np.mean(ious[:, j]), 4)
+        data[f"Hausdorff {c}"] = np.round(np.mean(hds[:, j]), 3)
 
     data["Mdsc"] = np.mean(dices)
     data["Miou"] = np.mean(ious)
+
+    return pd.DataFrame(data=data, index=[0])
+
+
+def create_dataframe2(config, dices, ious, hds):
+    data = {
+        'Date': config.date,
+        'Architecture': config.model,
+        'Seed': config.seed
+    }
+
+    metrics = np.concatenate([dices, ious, hds], axis=1)
+    for i,metric in enumerate(["Dice", "IoU", "Hausdorff"]):
+        for j,c in enumerate(["WM", "GM", "CSF"]):
+            data[f"{metric} {c}"] = np.round(np.mean(metrics[:, i*3+j]), 4)
+            data[f"{metric} std {c}"] = np.round(np.std(metrics[:, i*3+j]), 4)
+
+    data["Mdsc"] = np.round(np.mean(dices),4)
+    data["Miou"] = np.round(np.mean(ious), 4)
 
     return pd.DataFrame(data=data, index=[0])
 
