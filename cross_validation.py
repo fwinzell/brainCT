@@ -78,7 +78,7 @@ def parse_config():
     parser.add_argument("--sigmoid", type=bool, default=True,
                         help="True for MONAI models, False for UNet++4 and UNet3D_AG")
     parser.add_argument("--n_classes", type=int, default=3, help="2 for only WM and GM, 3 if CSF is included")
-    parser.add_argument("--n_pseudo", type=int, default=13, help="Number of slices in psuedo 3D input")
+    parser.add_argument("--n_pseudo", type=int, default=1, help="Number of slices in psuedo 3D input")
 
     parser.add_argument("--only_70", type=bool, default=False, help="True if only 70 energy level is used")
     parser.add_argument("--batch_size", type=int, default=8)
@@ -111,19 +111,18 @@ def parse_config():
 
 def train_model(config, save_dir, train_dataset, val_dataset):
     training_completed = False
-    first_run = True
+    n_runs = 0
     eps = 0
     while not training_completed:
 
         unet = get_model(config)
         start_epoch = 0
 
-        if not first_run:
-            path = os.path.join(save_dir, 'best.pth')
-            if os.path.exists(path):
-                unet.load_state_dict(torch.load(path))
-                print("Loaded model from previous run")
-                start_epoch = eps + 1
+        if False:
+            path = os.path.join(save_dir, f"version_{str(n_runs-1)}", "best.pth")
+            unet.load_state_dict(torch.load(path))
+            print("Loaded model from previous run")
+            start_epoch = eps + 1
 
         module = SegModule(
             unet.to(device),
@@ -143,13 +142,13 @@ def train_model(config, save_dir, train_dataset, val_dataset):
             class_weights=config.class_weights,
             sigmoid=config.sigmoid,
             lr_schedule="multistep",
-            start_ep= start_epoch
+            start_ep=0
         )
 
         summary(unet.to(device), tuple([config.n_pseudo, 256, 256]))
 
         training_completed, eps = module.train()
-        first_run = False
+        n_runs += 1
     module.save_config(config)  # to .yaml file
 
     return module.model
@@ -214,7 +213,7 @@ def run_cross_val(config, spectral_mode=False, n_folds=4, one_level_per_case=Fal
     cv_dice_scores = np.zeros((n_folds, config.n_classes))
     cv_iou_scores = np.zeros((n_folds, config.n_classes))
     cv_hausdorff = np.zeros((n_folds, config.n_classes))
-    for k in range(n_folds):
+    for k in range(0, n_folds):
         print(f"##### Training on fold: {k} #####")
         torch.cuda.empty_cache()
         val_cases = fold_dict[k]

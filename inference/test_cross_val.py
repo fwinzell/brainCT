@@ -17,9 +17,9 @@ from torchmetrics import Dice, JaccardIndex
 from monai.metrics import HausdorffDistanceMetric
 
 from brainCT.train_utils.modules import SegModule
-from brainCT.main import parse_config, get_model, seed_torch
+#from brainCT.main import parse_config, seed_torch, get_model
 from brainCT.train_utils.data_loader import Dataset2hD, BrainDataset, SpectralDataset, BrainXLDataset, VotingDataset
-from brainCT.cross_validation import split_into_folds, create_dataframe2
+from brainCT.cross_validation import split_into_folds, create_dataframe2, parse_config, seed_torch, get_model
 
 from display import display_result
 
@@ -123,7 +123,7 @@ def run(config, fold_dict, cv_dir, datafolder="/home/fi5666wi/Brain_CT_MR_data/D
             files = [(f"{datafolder}/{cid}_M{energy}_l_T1.nii", f"{datafolder}/{cid}_seg3.nii") for cid in test_IDs]
         else:
             files = [(f"{datafolder}/{cid}_M{energy}_l_T1.nii", f"{datafolder}/{cid}_seg3.nii") for cid in fold_dict[k]]
-        dataset = BrainXLDataset(files, transforms)
+        dataset = BrainXLDataset(files, transforms, n_pseudo=config.n_pseudo)
         loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, drop_last=False, num_workers=0)
         model = get_model(config).to(device)
 
@@ -193,12 +193,12 @@ def run_3d(config, fold_dict, cv_dir, datafolder="/home/fi5666wi/Brain_CT_MR_dat
 
 if __name__ == "__main__":
     save_dir = "/home/fi5666wi/Python/Brain-CT/saved_models"
-    date = "2024-02-16"
+    date = "2024-03-25"
     cv_dir = os.path.join(save_dir,
                           #'crossval_2023-10-12', 'unet_plus_plus_0')
                           f'crossval_{date}', 'unet_plus_plus_0')
 
-    use_test_set = False
+    use_test_set = True
     use_3d_input = False
 
     # Removed due to insufficient quality on MRI image
