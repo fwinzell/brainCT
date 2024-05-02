@@ -314,11 +314,13 @@ def load_nii(path):
     img = sitk.GetArrayFromImage(img)
     return img
 
-def load_gt_nii(path):
+def load_gt_nii(path, select_all=False):
     indxs = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(path)), 0)
-    valid_slices = np.argwhere(np.squeeze(indxs).sum(axis=2).sum(axis=1) > 0)
-    valid_slices = valid_slices[1:-1, 0] # -2 to account for last and first slice in 2.5D
-    indxs = indxs[:, valid_slices, :, :]
+
+    if not select_all:
+        valid_slices = np.argwhere(np.squeeze(indxs).sum(axis=2).sum(axis=1) > 0)
+        valid_slices = valid_slices[1:-1, 0] # -2 to account for last and first slice in 2.5D
+        indxs = indxs[:, valid_slices, :, :]
 
     CSF = indxs == 3
     GM = indxs == 2
@@ -346,7 +348,8 @@ def calculate_metrics(seg, gt):
 
 
 if __name__ == "__main__":
-    path = "/home/fi5666wi/Brain_CT_MR_data/OUT/crossval_2024-01-15_v3/8_Ms59_M50_l_T1_seg.nii.gz"
+    #path = "/home/fi5666wi/Brain_CT_MR_data/OUT/crossval_2024-01-15_v3/8_Ms59_M50_l_T1_seg.nii.gz"
+    path = "/home/fi5666wi/Brain_CT_MR_data/matlab/8_Ms59/c01_1_00001_temp_8_Ms59_M70_l_T1_CTseg.nii"
     gt_path = "/home/fi5666wi/Brain_CT_MR_data/DL/8_Ms59_seg3.nii"
     seg = load_nii(path)
     gt = load_gt_nii(gt_path)

@@ -18,7 +18,7 @@ from monai.metrics import HausdorffDistanceMetric
 import SimpleITK as sitk
 
 from brainCT.main import parse_config, get_model
-from brainCT.train_utils.data_loader import BrainXLDataset, VotingDataset
+from brainCT.train_utils.data_loader import BrainXLDataset, VotingDataset, MultiModalDataset
 from monai.data import DataLoader
 
 from tqdm import tqdm
@@ -31,13 +31,14 @@ def statistics(result, alpha=0.95):
         mean = np.mean(result[metric], axis=0)
         std = np.std(result[metric], axis=0)
         conf = [st.norm.interval(alpha, loc=mu, scale=sigma/N) for mu, sigma in zip(mean, std)]
-        tstats[metric] = {"mean": mean, "std": std, "conf": conf}
+        tstats[metric] = {"mean": np.round(mean, 4), "std": np.round(std, 4), "conf": np.round(conf, 4)}
 
     return tstats
 
 
 def get_dataset(config, test_IDs, i3d=False):
-    if i3d:
+    datafolder = os.path.join(config.base_dir, 'DL')
+    if not i3d:
         transforms = Compose(
             [ToTensord(keys=["img", "seg"]),
              ScaleIntensityd(keys="img", minv=0.0, maxv=1.0)])
@@ -60,7 +61,7 @@ def get_dataset(config, test_IDs, i3d=False):
     return dataset
 
 
-def seg_results(config, test_IDs):
+def seg_results(config, model_path, test_IDs):
     dataset = get_dataset(config, test_IDs, i3d=config.use_3d_input)
     N_slices = len(dataset)
 
@@ -82,7 +83,11 @@ def seg_results(config, test_IDs):
 
     loop = tqdm(loader, total=len(loader), position=0, leave=False)
     for k, batch in enumerate(loop):
-        input, label = (batch["img"], batch["seg"])
+        if config.use_3d_input:
+            input = torch.stack([batch["img_50"], batch["img_70"], batch["img_120"]], dim=1)
+            label = batch["seg"]
+        else:
+            input, label = (batch["img"], batch["seg"])
 
         dice_scores = np.zeros(config.n_classes)
         iou_scores = np.zeros(config.n_classes)
@@ -113,12 +118,93 @@ def seg_results(config, test_IDs):
 
     return results
 
-def bootstrap(results, iterations=1000):
+def gen_results(config, model_path, test_IDs):
+    config.n_classes = 3
+    config.sigmoid = False
+    datafolder = os.path.join(config.base_dir, 'DL')
+    if not config.use_3d_input:
+        transforms = Compose(
+            [ToTensord(keys=["img", "mri", "seg"]),
+             ScaleIntensityd(keys="img", minv=0.0, maxv=1.0)])
+        test_cases = [(f"{datafolder}/{cid}_T1.nii", f"{datafolder}/{cid}_seg3.nii") for cid in test_IDs]
+        dataset = BrainXLDataset(test_cases, transforms, n_pseudo=config.n_pseudo)
+    else:
+        transforms = Compose(
+            [ToTensord(keys=["img_50", "img_70", "img_120", "mri", "seg"]),
+             ScaleIntensityd(keys=["img_50", "img_70", "img_120", "mri"], minv=0.0, maxv=1.0)])
+
+        energies = [50, 70, 120]
+        test_cases = [[f"{datafolder}/{cid}_M{level}_l_T1.nii" for level in energies]
+                      + [f"{datafolder}/{cid}_T1.nii", f"{datafolder}/{cid}_seg3.nii"]
+                      for cid in test_IDs]
+
+        dataset = MultiModalDataset(test_cases, transforms)
+
+    N_slices = len(dataset)
+
+    from brainCT.train_gan import get_model
+    model = get_model(config)
+
+    model.load_state_dict(torch.load(os.path.join(model_path, 'last.pth')), strict=True)
+    model.eval()
+    model.to("cpu")
+    binarize = AsDiscrete(threshold=0.5)
+
+    # Metrics
+    dsc = Dice(zero_division=np.nan, ignore_index=0)  # DiceMetric(include_background=True)
+    iou = JaccardIndex(task='binary')  # MeanIoU(include_background=True)
+    hdm = HausdorffDistanceMetric(include_background=True, percentile=95.0)
+
+    results = {"Dice": np.zeros((N_slices, config.n_classes)),
+               "IoU": np.zeros((N_slices, config.n_classes)),
+               "Hausdorff": np.zeros((N_slices, config.n_classes))}
+
+    loader = DataLoader(dataset, batch_size=1, shuffle=False, drop_last=False, num_workers=0)
+
+    loop = tqdm(loader, total=len(loader), position=0, leave=False)
+    for k, batch in enumerate(loop):
+        if config.use_3d_input:
+            input = torch.stack([batch["img_50"], batch["img_70"], batch["img_120"]], dim=1)
+            label = batch["seg"]
+        else:
+            input, label = (batch["img"], batch["seg"])
+
+        dice_scores = np.zeros(config.n_classes)
+        iou_scores = np.zeros(config.n_classes)
+
+        with torch.no_grad():
+            output, recon = model(input)
+            # Metrics
+            if type(output) == list:
+                output = output[0]
+            if config.sigmoid:
+                output = torch.sigmoid(output)
+
+            y_pred = binarize(output)
+
+            for i in range(config.n_classes):
+                pred = y_pred[0, i, :, :]
+                tar = label[0, i, :, :]
+                dice_scores[i] = dsc(pred.to(torch.uint8), tar).item()
+                iou_scores[i] = iou(pred.to(torch.uint8), tar).item()
+            hausdorff = hdm(y_pred=y_pred, y=label, spacing=1)
+
+            results["Dice"][k,] = dice_scores
+            results["IoU"][k,] = iou_scores
+            hausdorff[np.isinf(hausdorff)] = np.nan  # Remove inf values
+            results["Hausdorff"][k,] = hausdorff
+
+            loop.set_postfix(dsc=[np.round(t, 4) for t in dice_scores])
+
+    return results
+
+
+def bootstrap(results, iterations=1000, n_classes=3):
     N = len(results["Dice"])
 
-    dasboot = {"Dice": np.zeros((iterations, config.n_classes)),
-               "IoU": np.zeros((iterations, config.n_classes)),
-               "Hausdorff": np.zeros((iterations, config.n_classes))}
+    dasboot = {"Dice": np.zeros((iterations, n_classes)),
+               "IoU": np.zeros((iterations, n_classes)),
+               "Hausdorff": np.zeros((iterations, n_classes))}
     for i in range(iterations):
         idx = np.random.choice(N, N, replace=True)
         dice = results["Dice"][idx]
@@ -175,16 +261,16 @@ def save_as_csv(data, filename):
 def get_args():
     parser = argparse.ArgumentParser("argument for bootstrap")
 
-    parser.add_argument("--model", "-m", type=str, default="unet_plus_plus",
-                        help="unet, unet_plus_plus, unet_plus_plus_3d, unet_att")
-    parser.add_argument("--model_name", type=str, default="unet_plus_plus_2024-02-16/")
+    parser.add_argument("--model", "-m", type=str, default="unet_plus_plus_3d",
+                        help="unet, unet_plus_plus, unet_plus_plus_3d, unet_att, genunet")
+    parser.add_argument("--model_name", type=str, default="unet_plus_plus_3d_2024-04-08/")
     parser.add_argument("--version", "-v",  type=int, default=0)
 
-    parser.add_argument('--use_3d_input', type=bool, default=False)
-    parser.add_argument('--sigmoid', type=bool, default=False)
+    #parser.add_argument('--use_3d_input', type=bool, default=False)
+    #parser.add_argument('--sigmoid', type=bool, default=False)
 
     parser.add_argument("--iterations", "-i", type=int, default=1000)
-    parser.add_argument("--load_results", type=bool, default=False)
+    parser.add_argument("--load_results", type=bool, default=True)
 
     args = parser.parse_args()
     return args
@@ -197,19 +283,14 @@ if __name__ == "__main__":
     model_name = args.model_name
     model_path = os.path.join(save_dir, model_name, f"version_{args.version}")
 
-    if os.path.exists(os.path.join(model_path, 'config.yaml')):
-        with open(os.path.join(model_path, 'config.yaml'), "r") as f:
-            config = yaml.safe_load(f)
-            config = Namespace(**config)
-            config.use_3d_input = args.use_3d_input
-    else:
-        config = parse_config()
+    with open(os.path.join(model_path, 'config.yaml'), "r") as f:
+        config = yaml.safe_load(f)
+        config = Namespace(**config)
+
 
     datafolder = os.path.join(config.base_dir, 'DL')
-    config.sigmoid = args.sigmoid
     config.model_name = model_name
-    #if config.use_3d_input and config.model != "unet":
-    #   config.model = "unet_plus_plus_3d"
+
     config.model = args.model
 
     # Removed due to insufficient quality on MRI image
@@ -221,17 +302,20 @@ if __name__ == "__main__":
 
     if args.load_results:
         res = load_results(model_path)
-    elif args.use_3d_input:
-        res = bootstrap3d(config, test_IDs, iterations=args.iterations)
     else:
-        res = bootstrap(config, test_IDs, iterations=args.iterations)
+        if args.model == "genunet":
+            res = gen_results(config, test_IDs)
+        else:
+            res = seg_results(config, test_IDs)
 
-    stata = statistics(res)
-
-    print(stata)
 
     # Save results
+    if not args.load_results:
+        save_results(res, model_path)
+
+    bs = bootstrap(res, iterations=args.iterations)
+
+    stata = statistics(bs)
     save_as_csv(stata, os.path.join(model_path, "bootstrap_stats.csv"))
 
-    with open(os.path.join(model_path, "bootstrap_results.yaml"), "w") as f:
-        yaml.dump(res, f)
+

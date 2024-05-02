@@ -221,9 +221,9 @@ def save_output(model_name, out_vol, test_case):
 
 if __name__ == "__main__":
     save_dir = "/home/fi5666wi/Python/Brain-CT/saved_models"
-    model_name = "unet_plus_plus_2024-02-16/"
+    model_name = "unet_plus_plus_3d_2024-04-05/"
     model_path = os.path.join(save_dir, #'crossval_2024-01-23',
-                              model_name, 'version_1')
+                              model_name, 'version_0')
 
     if os.path.exists(os.path.join(model_path, 'config.yaml')):
         with open(os.path.join(model_path, 'config.yaml'), "r") as f:
@@ -234,17 +234,17 @@ if __name__ == "__main__":
 
     datafolder = os.path.join(config.base_dir, 'DL')
     config.model_name = model_name
-    if config.use_3d_input and config.model != "unet":
-       config.model = "unet_plus_plus_3d"
+    #if config.use_3d_input and config.model != "unet":
+    #   config.model = "unet_plus_plus_3d"
 
     # Removed due to insufficient quality on MRI image
     # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
-    test_IDs = ["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "26_LB59", "33_ET51"]
+    test_IDs = ["8_Ms59"] #"8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "26_LB59", "33_ET51"]
     IDs = ["5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
            "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39",
            "25_HH57", "28_LO45", "27_IL48", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"]  # 3mm
 
-    #eval3d(config, test_IDs, save=False, concat=True) #, save_name="crossval_2024-01-24_v4")
-    eval(config, test_IDs, save=False, display=False) #save_name="crossval_2024-01-16_v4")
+    eval3d(config, test_IDs, save=True, concat=False, save_name=model_name)
+    #eval(config, test_IDs, save=True, display=True, save_name=model_name)
     #eval_with_voting(config, test_IDs)
 

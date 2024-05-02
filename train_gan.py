@@ -35,11 +35,14 @@ def parse_config():
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("-e", "--epochs", type=int, default=99)
     parser.add_argument("--input_shape", nargs=3, type=int, default=[3, 256, 256])
-    parser.add_argument("--loss", type=str, default="focal", help="loss function, one of dice or focal")
+    parser.add_argument("--features", nargs="+", type=int, default=[24, 48, 96, 192, 384])
+    parser.add_argument("--loss", type=str, default="dicece", help="loss function, one of dice, ce or focal")
+    parser.add_argument("--beta", type=float, default=0.5)
     parser.add_argument("--learning_rate", type=float, default=0.01)  # prev 0.01
     parser.add_argument("--class_weights", nargs=3, type=float, default=None) #[0.87521193, 0.85465177, 10.84828136])
     # [0.87521193,  0.85465177, 10.84828136] 1E7/total_volumes
     # [ 0.2663065 ,  0.25394151, 40.91449388] N^2/(total_volumes^2 * 1E4)
+    parser.add_argument("--sigmoid", type=bool, default=False)
 
     parser.add_argument("--base_dir", type=str, default="/home/fi5666wi/Brain_CT_MR_data")
     parser.add_argument("--save_dir", type=str, default="/home/fi5666wi/Python/Brain-CT/saved_models")
@@ -73,7 +76,7 @@ def get_model(config):
     return GUNet(spatial_dims=2,
                  in_channels=3,
                  out_channels=3,
-                 channels=(16, 32, 64, 128, 256),
+                 channels=config.features,
                  strides=(2, 2, 4, 4),
                  kernel_size=3,
                  up_kernel_size=3,
@@ -135,10 +138,10 @@ def train(config):
                                'eps': config.eps,
                                'weight_decay': config.weight_decay},
             save_dir=os.path.join(config.save_dir, save_name),
-            lr_schedule="multistep",
+            lr_schedule="None",
             loss=config.loss,
             sigmoid=True,
-            beta=0.5,
+            beta=config.beta,  # ratio of dice loss to ssim loss
             class_weights=config.class_weights,
         )
 

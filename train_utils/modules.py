@@ -12,7 +12,7 @@ from monai.losses import DiceLoss, GeneralizedDiceLoss, TverskyLoss, SSIMLoss
 from monai.transforms import AsDiscrete
 from torchmetrics import Dice, JaccardIndex
 
-from brainCT.train_utils.losses import DiceSSIMLoss, FocalSSIMLoss
+from brainCT.train_utils.losses import DiceSSIMLoss, FocalSSIMLoss, CESSIMLoss, DiceCESSIMLoss
 
 class SegModule(object):
     def __init__(self,
@@ -387,6 +387,10 @@ class GenSegModule(object):
             self.loss_module = DiceSSIMLoss(beta=beta, sigmoid=self.sigmoid, class_weights=class_weights)
         elif loss == "focal":
             self.loss_module = FocalSSIMLoss(beta=beta, class_weights=class_weights)
+        elif loss == "ce":
+            self.loss_module = CESSIMLoss(beta=beta, sigmoid=self.sigmoid, class_weights=class_weights)
+        elif loss == "dicece":
+            self.loss_module = DiceCESSIMLoss(beta=beta, sigmoid=self.sigmoid, class_weights=class_weights)
 
         self.dice = Dice(zero_division=np.nan, ignore_index=0).to(self.device)
         self.iou = JaccardIndex(task='binary')
@@ -439,10 +443,10 @@ class GenSegModule(object):
 
         if self.lr_schedule == "multistep":
             # We will reduce the learning rate by 0.1 after 50 and 75 epochs
-            scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[50, 75], gamma=0.1)
+            scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[75, 95], gamma=0.1)
         elif self.lr_schedule == "onplateau":
             # Reduce on plateu, max for val dice scores, min for loss
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=10,
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=5,
                                                              threshold=0.001, threshold_mode='rel', cooldown=0,
                                                              min_lr=1e-6, verbose=False)
         else:
