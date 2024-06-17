@@ -80,8 +80,8 @@ def display_slice(slice_n, ID):
 
 
 if __name__ == "__main__":
-    ID = "18_MN44"
-    slice_n = 99
+    ID = "8_Ms59"
+    slice_n = 52
     #display_slice(slice_n, ID)
     save_slice(slice_n, ID)
 

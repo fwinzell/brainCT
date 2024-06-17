@@ -231,11 +231,11 @@ def save_results_as_csv(data, filename):
         writer.writerows(data)
 
 
-def save_results(res, model_path):
+def save_bootstrap(res, model_path):
     with open(os.path.join(model_path, "bootstrap_results.yaml"), "w") as f:
         yaml.dump(res, f)
 
-def load_results(model_path):
+def load_bootstrap(model_path):
     with open(os.path.join(model_path, "bootstrap_results.yaml"), "r") as f:
         res = yaml.unsafe_load(f)
     return res

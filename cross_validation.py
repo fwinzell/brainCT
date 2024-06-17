@@ -78,9 +78,11 @@ def parse_config():
     parser.add_argument("--sigmoid", type=bool, default=True,
                         help="True for MONAI models, False for UNet++4 and UNet3D_AG")
     parser.add_argument("--n_classes", type=int, default=3, help="2 for only WM and GM, 3 if CSF is included")
-    parser.add_argument("--n_pseudo", type=int, default=1, help="Number of slices in psuedo 3D input")
+    parser.add_argument("--n_pseudo", type=int, default=3, help="Number of slices in psuedo 3D input")
 
     parser.add_argument("--only_70", type=bool, default=False, help="True if only 70 energy level is used")
+    parser.add_argument("--only_50", type=bool, default=False, help="True if only 50 energy level is used")
+    parser.add_argument("--only_120", type=bool, default=True, help="True if only 120 energy level is used")
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("-e", "--epochs", type=int, default=99)
     parser.add_argument("--num_folds", type=int, default=5)  # For cross-validation, 4 or 5 (without/with 3mm)
@@ -180,9 +182,14 @@ def run_cross_val(config, spectral_mode=False, n_folds=4, one_level_per_case=Fal
     # Create training folds
     datafolder = os.path.join(config.base_dir, 'DL')
     ### THIS SHOULD BE 50, 70, 120 ####
-    energies = [50, 70, 120]
     if config.only_70:
         energies = [70]
+    elif config.only_50:
+        energies = [50]
+    elif config.only_120:
+        energies = [120]
+    else:
+        energies = [50, 70, 120]
 
     # Removed due to insufficient quality on MRI image
     # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
