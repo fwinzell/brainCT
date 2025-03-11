@@ -11,7 +11,7 @@ from monai.transforms import Compose, Randomizable, Transform, apply_transform, 
     RandZoomd
 from torchvision.transforms import GaussianBlur, RandomApply
 import cv2
-
+from torch.utils.data import Sampler
 
 class Dataset2hD(Dataset):
     def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None) -> None:
@@ -175,6 +175,10 @@ class SimpleBrainDataset(Dataset):
 
 
 class BrainXLDataset(Dataset):
+    """
+    General Dataset class for 2.5D brain data.
+    Loads several volumes and batches them together.
+    """
     def __init__(self,
                  dataurls: Sequence,
                  transform: Optional[Callable] = None,
@@ -264,8 +268,12 @@ class BasicBrainDataset(BrainXLDataset):
 
 
 class SpectralDataset(BrainXLDataset):
-    def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None) -> None:
-        super().__init__(dataurls, transform)
+    """
+    Spectral mode: 3 VMIs concatenated into one image block with one segmentation block
+    Default no pseudo 3D
+    """
+    def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None, n_pseudo:int = 1) -> None:
+        super().__init__(dataurls, transform, n_pseudo=n_pseudo)
 
     def _preprocess(self):
         # Need to handle 3mm CT images here as well?
@@ -298,11 +306,12 @@ class SpectralDataset(BrainXLDataset):
         self.data = {"img_50": imgs[0], "img_70": imgs[1], "img_120": imgs[2], "seg": seg.astype(np.uint8)}
 
     def _transform(self, index: int):
-        imgblock = np.concatenate((np.expand_dims(self.data["img_50"][0, index, :, :], 0),
-                                   np.expand_dims(self.data["img_70"][0, index, :, :], 0),
-                                   np.expand_dims(self.data["img_120"][0, index, :, :],0))
+        k = np.floor(self.n_pseudo / 2).astype(int)
+        imgblock = np.concatenate((np.expand_dims(self.data["img_50"][0, index:index+self.n_pseudo, :, :], 0),
+                                   np.expand_dims(self.data["img_70"][0, index:index+self.n_pseudo, :, :], 0),
+                                   np.expand_dims(self.data["img_120"][0, index:index+self.n_pseudo, :, :],0))
                                   , axis=0)
-        segblock = self.data["seg"][:, index, :, :]
+        segblock = self.data["seg"][:, index+k, :, :]
         data_i = {"img": imgblock, "seg": segblock}
 
         return apply_transform(self.transform, data_i) if self.transform is not None else data_i
@@ -318,8 +327,11 @@ class SpectralDataset(BrainXLDataset):
 
 
 class VotingDataset(SpectralDataset):
-    def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None) -> None:
-        super().__init__(dataurls, transform)
+    """
+    3 VMIs separated into 3 image blocks with one segmentation block, enables voting etc.
+    """
+    def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None, n_pseudo:int = 3) -> None:
+        super().__init__(dataurls, transform, n_pseudo=n_pseudo)
 
     def _preprocess(self):
         n_slices = [0]
@@ -332,35 +344,19 @@ class VotingDataset(SpectralDataset):
 
     def _transform(self, index: int):
         # Fetch single data item from `self.data`.
+        k = np.floor(self.n_pseudo / 2).astype(int)
 
-        imgblock_50 = self.data["img_50"][0, index:index + 3, :, :]
-        imgblock_70 = self.data["img_70"][0, index:index + 3, :, :]
-        imgblock_120 = self.data["img_120"][0, index:index + 3, :, :]
-        segblock = self.data["seg"][:, index + 1, :, :]
+        imgblock_50 = self.data["img_50"][0, index:index + self.n_pseudo, :, :]
+        imgblock_70 = self.data["img_70"][0, index:index + self.n_pseudo, :, :]
+        imgblock_120 = self.data["img_120"][0, index:index + self.n_pseudo, :, :]
+        segblock = self.data["seg"][:, index + k, :, :]
         data_i = {"img_50": imgblock_50, "img_70": imgblock_70, "img_120": imgblock_120,  "seg": segblock}
 
         return apply_transform(self.transform, data_i) if self.transform is not None else data_i
 
 
-class ConcatDataset(VotingDataset):
-    def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None) -> None:
-        super().__init__(dataurls, transform)
-
-    def _transform(self, index: int):
-        # Fetch single data item from `self.data`.
-
-        imgblock_50 = self.data["img_50"][0, index:index + 3, :, :]
-        imgblock_70 = self.data["img_70"][0, index:index + 3, :, :]
-        imgblock_120 = self.data["img_120"][0, index:index + 3, :, :]
-        imgblock = np.concatenate((imgblock_50, imgblock_70, imgblock_120), axis=0)
-        segblock = self.data["seg"][:, index + 1, :, :]
-        data_i = {"img": imgblock, "seg": segblock}
-
-        return apply_transform(self.transform, data_i) if self.transform is not None else data_i
-
-
-
 class MultiModalDataset(VotingDataset):
+    # This returns both 3 VMIs, segmentation and the MRI image for each slice
     def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None) -> None:
         super().__init__(dataurls, transform)
 
@@ -464,7 +460,7 @@ class WMGMDataset(BrainXLDataset):
         self.data = {"img": (img - 30.0) / 5.0, "seg": seg.astype(np.uint8)}
 
 
-class MaskDataset(BrainXLDataset):
+"""class MaskDataset(BrainXLDataset):
     def __init__(self, dataurls: Sequence, transform: Optional[Callable] = None) -> None:
         super().__init__(dataurls, transform)
 
@@ -483,6 +479,7 @@ class MaskDataset(BrainXLDataset):
         img[img < 0] = 0
         img[img > 100] = 100
         self.data = {"img": (img - 30.0) / 5.0, "seg": seg.astype(np.uint8)}
+"""
 
 
 class InfDataset(SpectralDataset):
@@ -529,38 +526,97 @@ class InfDataset(SpectralDataset):
 
         return apply_transform(self.transform, data_i) if self.transform is not None else data_i
 
+# Need to test this out... 
+class WarmUpSampler(Sampler):
+    def __init__(self, dataset, warm_up):
+        self.dataset = dataset
+        self.warm_up_epochs = warm_up
+        self.current_epoch = 0
+        self.cached_indices = None
+
+    def __len__(self):
+        """
+        Returns the number of samples available for this epoch.
+        """
+        if self.current_epoch < self.warm_up_epochs:
+            # Use cached indices if available
+            if self.cached_indices is None:
+                self._compute_valid_indices()
+            return len(self.cached_indices)
+        else:
+            return len(self.dataset)
+
+    def __iter__(self):
+        """
+        Yields indices for samples containing all classes during warm-up.
+        Returns:
+            An iterator of indices.
+        If warm up is over, it will be equivalient to SequentialSampler. (if warm_up_epochs is 0, there is no warm-up)
+        """
+        if self.current_epoch < self.warm_up_epochs:
+            if self.cached_indices is None:
+                self._compute_valid_indices()
+            indices = self.cached_indices
+        else:
+            indices = list(range(len(self.dataset)))
+
+        self.current_epoch += 1
+        return iter(indices)
+    
+    def _compute_valid_indices(self):
+        data_loader = DataLoader(self.dataset, batch_size=1, shuffle=False)
+        self.cached_indices = [
+            i for i, sample in enumerate(data_loader) if self.contains_all_classes(sample)
+        ]
+
+    def contains_all_classes(self, sample):
+        # Check if a sample contains all classes
+        segment = np.squeeze(sample["seg"])
+        return (segment != 0).any(axis=(1, 2)).all()
+    
+    def set_epoch(self, epoch):
+        """
+        Update the current epoch (to be called at the start of each epoch).
+        """
+        self.current_epoch = epoch
+
+
 
 if __name__ == "__main__":
     datafolder = "/home/fi5666wi/Brain_CT_MR_data/DL"
 
-    """
+    
     train_transforms = Compose(
         [RandAffined(keys=["img_50", "img_70", "img_120", "seg"], mode=["bilinear", "bilinear", "bilinear", "nearest"],
                      prob=0.9, shear_range=[0.1, 0.1, 0.1]),
          ToTensord(keys=["img_50", "img_70", "img_120", "seg"]),
          RandGaussianSmoothd(keys=["img_50", "img_70", "img_120"], prob=1.0, sigma_x=(0.2, 2.0), sigma_y=(0.2, 2.0),
                              sigma_z=(0.5, 1.5)),
-         RandAdjustContrastd(keys=["img_50", "img_70", "img_120"], prob=1.0, gamma=(0.5, 2.0)),
-         RandGibbsNoised(keys=["img_50", "img_70", "img_120"], prob=1.0, alpha=(0, 0.25)),
+         #RandAdjustContrastd(keys=["img_50", "img_70", "img_120"], prob=1.0, gamma=(0.5, 2.0)),
+         #RandGibbsNoised(keys=["img_50", "img_70", "img_120"], prob=1.0, alpha=(0, 0.25)),
          RandZoomd(keys=["img_50", "img_70", "img_120", "seg"], mode=["bilinear", "bilinear", "bilinear", "nearest"],
                    prob=1.0, min_zoom=0.9, max_zoom=1.5),
          ScaleIntensityd(keys=["img_50", "img_70", "img_120"], minv=0.0, maxv=1.0)])
     """
     train_transforms = Compose([
         ToTensord(keys=["img_50", "img_70", "img_120", "mri", "seg"]),
-        ScaleIntensityd(keys=["img_50", "img_70", "img_120"], minv=0.0, maxv=1.0)])
+        ScaleIntensityd(keys=["img_50", "img_70", "img_120"], minv=0.0, maxv=1.0)])"""
     
     energies = [50, 70, 120]
     IDs = ["25_HH57", "26_LB59", "29_MS42", "31_EM88", "32_EN56", "34_LO45"]
     tr_cases = [[f"{datafolder}/{cid}_M{level}_l_T1.nii" for level in energies]
                 + [f"{datafolder}/{cid}_T1.nii", f"{datafolder}/{cid}_seg3.nii"]
                 for cid in IDs[3:]]
+    tr_cases = [[f"{datafolder}/{cid}_M{level}_l_T1.nii" for level in energies]
+                + [f"{datafolder}/{cid}_seg3.nii"]
+                for cid in IDs]
 
     one_case_per_seg = []
     for level in energies:
         one_case_per_seg += [(f"{datafolder}/{cid}_M{level}_l_T1.nii", f"{datafolder}/{cid}_seg3.nii") for cid in IDs[3:]]
 
-    #brainset = SimpleBrainDataset(one_case_per_seg, train_transforms)
+    
+    """#brainset = SimpleBrainDataset(one_case_per_seg, train_transforms)
     bababooey = BrainXLDataset(one_case_per_seg,
                                Compose([ToTensord(keys=["img", "seg"]),
                                         ScaleIntensityd(keys=["img"], minv=0.0, maxv=1.0)]),
@@ -574,18 +630,19 @@ if __name__ == "__main__":
         img = np.moveaxis(img[0], source=0, destination=-1)
         seg = np.moveaxis(np.uint8(seg[0] * 255), source=0, destination=-1)
         print(img.shape)
-        print(seg.shape)
+        print(seg.shape)"""
 
+    train_dataset = VotingDataset(tr_cases, train_transforms) #MultiModalDataset(tr_cases, train_transforms)
 
+    warm_up_epochs = 10
+    sampler = WarmUpSampler(train_dataset, warm_up=warm_up_epochs)
 
-
-    train_datset = MultiModalDataset(tr_cases, train_transforms)
-    loader = DataLoader(train_datset, batch_size=2, shuffle=False, num_workers=0)
+    loader = DataLoader(train_dataset, batch_size=2, shuffle=False, num_workers=0, sampler=sampler)
     for i,batte in enumerate(loader):
         img_50 = batte["img_50"].numpy()
         img_70 = batte["img_70"].numpy()
         img_120 = batte["img_120"].numpy()
-        mri = batte["mri"].numpy()
+        #mri = batte["mri"].numpy()
         seg = batte["seg"].numpy()
         print(f"Loaded {i}")
 
@@ -597,12 +654,12 @@ if __name__ == "__main__":
         im50 = np.uint8(((im50-np.min(im50)) / np.max(im50)) * 255)
         im70 = np.uint8(((im70 - np.min(im70)) / np.max(im70)) * 255)
         im120 = np.uint8(((im120 - np.min(im120)) / np.max(im120)) * 255)
-        mri = np.moveaxis(mri[0], source=0, destination=-1)
+        #mri = np.moveaxis(mri[0], source=0, destination=-1)
         seg = np.moveaxis(np.uint8(seg[0] * 255), source=0, destination=-1)
         cv2.imshow('50keV', im50[:, :, 1])
         cv2.imshow('70keV', im70[:, :, 1])
         cv2.imshow('120keV', im120[:, :, 1])
-        cv2.imshow('MRI', mri)
+        #cv2.imshow('MRI', mri)
         cv2.imshow('Target', seg)
         # cv2.imshow('Border', border)
         cv2.waitKey(0)

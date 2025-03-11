@@ -111,7 +111,7 @@ def seg_results(config, model_path, test_IDs):
 
             results["Dice"][k,] = dice_scores
             results["IoU"][k,] = iou_scores
-            hausdorff[np.isinf(hausdorff)] = np.nan  # Remove inf values
+            hausdorff[np.isinf(np.array(hausdorff))] = np.nan  # Remove inf values
             results["Hausdorff"][k,] = hausdorff
 
             loop.set_postfix(dsc=[np.round(t, 4) for t in dice_scores])
@@ -142,7 +142,7 @@ def gen_results(config, model_path, test_IDs):
 
     N_slices = len(dataset)
 
-    from brainCT.train_gan import get_model
+    from brainCT.train_gen import get_model
     model = get_model(config)
 
     model.load_state_dict(torch.load(os.path.join(model_path, 'last.pth')), strict=True)

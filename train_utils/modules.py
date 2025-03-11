@@ -12,7 +12,9 @@ from monai.losses import DiceLoss, GeneralizedDiceLoss, TverskyLoss, SSIMLoss
 from monai.transforms import AsDiscrete
 from torchmetrics import Dice, JaccardIndex
 
-from brainCT.train_utils.losses import DiceSSIMLoss, FocalSSIMLoss, CESSIMLoss, DiceCESSIMLoss
+from brainCT.train_utils.losses import DiceSSIMLoss, FocalSSIMLoss, CESSIMLoss, DiceCESSIMLoss, MultiClassDiceLoss, MCDiceCESSIMLoss
+from brainCT.train_utils.data_loader import WarmUpSampler
+from torch.utils.data import SequentialSampler
 
 class SegModule(object):
     def __init__(self,
@@ -30,6 +32,7 @@ class SegModule(object):
                  sigmoid=True,
                  class_weights=None,
                  lr_schedule="multistep",
+                 warm_up_epochs=10,
                  start_ep=0):
         super().__init__()
 
@@ -41,6 +44,7 @@ class SegModule(object):
         self.model = model
         self.tr_dataset = train_data
         self.val_dataset = val_data
+        self.warm_up_epochs = warm_up_epochs
         self.optimizer_name = optimizer_name
         self.optimizer_hparams = optimizer_hparams
         self.n_classes = len(classes)
@@ -60,6 +64,9 @@ class SegModule(object):
         elif loss == "tversky":
             self.loss_module = TverskyLoss(to_onehot_y=False, sigmoid=self.sigmoid, softmax=False, alpha=0.7, beta=0.3,
                                            smooth_nr=1e-5, smooth_dr=1e-5)
+        elif loss == "multiclass":
+            self.loss_module = MultiClassDiceLoss(sigmoid=self.sigmoid, class_weights=class_weights)
+        
         else:
             assert False, f'Unknown loss: "{loss}"'
 
@@ -96,7 +103,8 @@ class SegModule(object):
 
     def train_dataloader(self):
         # Solved issue: "Unable to display frames in debugger" - set num_workers to 0
-        return DataLoader(self.tr_dataset, batch_size=self.batch_size, shuffle=False, drop_last=False, num_workers=0)
+        sampler = WarmUpSampler(self.tr_dataset, self.warm_up_epochs) # If warm_up_epochs is 0, it will be equivalent to SequentialSampler
+        return DataLoader(self.tr_dataset, batch_size=self.batch_size, drop_last=False, num_workers=0, sampler=sampler)
 
     def val_dataloader(self):
         return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, drop_last=False, num_workers=0)
@@ -119,7 +127,7 @@ class SegModule(object):
             # Reduce on plateu, max for val dice scores, min for loss
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=10,
                                                              threshold=0.001, threshold_mode='rel', cooldown=0,
-                                                             min_lr=1e-6, verbose=False)
+                                                             min_lr=1e-6)
         else:
             # No learning rate decay
             scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=1)
@@ -285,21 +293,25 @@ class SegModule3d(SegModule):
                  loss: str = "dice",
                  sigmoid: bool = True,
                  class_weights=None,
-                 lr_schedule: str ="multistep"):
-        super().__init__(model,
-                         train_data,
-                         val_data,
-                         batch_size,
-                         max_epochs,
-                         learning_rate,
-                         optimizer_name,
-                         optimizer_hparams,
-                         save_dir,
-                         classes,
-                         loss,
-                         sigmoid,
-                         class_weights,
-                         lr_schedule)
+                 warm_up_epochs=10,
+                 lr_schedule: str ="multistep",
+                 start_ep=0):
+        super().__init__(model=model,
+                         train_data=train_data,
+                         val_data=val_data,
+                         batch_size=batch_size,
+                         max_epochs=max_epochs,
+                         learning_rate=learning_rate,
+                         optimizer_name=optimizer_name,
+                         optimizer_hparams=optimizer_hparams,
+                         save_dir=save_dir,
+                         classes=classes,
+                         loss=loss,
+                         sigmoid=sigmoid,
+                         class_weights=class_weights,
+                         lr_schedule=lr_schedule,
+                         warm_up_epochs=warm_up_epochs,
+                         start_ep=start_ep)
 
         self.example_input_array = torch.rand(4, 3, 3, 256, 256)
 
@@ -344,8 +356,8 @@ class SegModule3d(SegModule):
         return dice_score
 
 
-def calculate_ssim(recon, target):
-    return 1-SSIMLoss(spatial_dims=2, reduction="mean", data_range=1.0)(recon, target)
+def calculate_ssim(recon, target, spatial_dims=2, reduction="mean"):
+    return 1-SSIMLoss(spatial_dims=spatial_dims, reduction=reduction, data_range=1.0)(recon, target)
 
 
 class GenSegModule(object):
@@ -391,6 +403,10 @@ class GenSegModule(object):
             self.loss_module = CESSIMLoss(beta=beta, sigmoid=self.sigmoid, class_weights=class_weights)
         elif loss == "dicece":
             self.loss_module = DiceCESSIMLoss(beta=beta, sigmoid=self.sigmoid, class_weights=class_weights)
+        elif loss == "multiclass":
+            self.loss_module = MCDiceCESSIMLoss(beta=beta, sigmoid=self.sigmoid, class_weights=class_weights)
+        else:
+            assert False, f'Unknown loss: "{loss}"'
 
         self.dice = Dice(zero_division=np.nan, ignore_index=0).to(self.device)
         self.iou = JaccardIndex(task='binary')

@@ -83,6 +83,32 @@ class FocalSSIMLoss(torch.nn.Module):
         return combined
 
 
+class MultiClassDiceLoss(torch.nn.Module):
+    def __init__(self, class_weights=None, sigmoid=True):
+        super().__init__()
+        self.dice_loss = DiceLoss(include_background=True, to_onehot_y=False, sigmoid=sigmoid,
+                                        squared_pred=True, weight=class_weights, reduction="none")
+
+    def forward(self, output, labels):
+        ndice = self.dice_loss(output, labels)
+        class_presence = labels.sum(dim=(2, 3)) > 0
+        valid_loss = (torch.squeeze(ndice) * class_presence.float()).mean()
+        return valid_loss
+
+
+class MCDiceCESSIMLoss(DiceCESSIMLoss):
+    def __init__(self, beta=0.5, sigmoid=True, class_weights=None):
+        super().__init__(beta, sigmoid, class_weights)
+    
+    def forward(self, seg, labels, recon, target):
+        dice_loss = self.dice_loss(seg, labels)
+        ssim_loss = self.ssim_loss(recon, target)
+
+        class_presence = labels.sum(dim=(2, 3)) > 0
+        valid_loss = (torch.squeeze(dice_loss) * class_presence.float()).mean()
+        combined = self.beta * valid_loss + (1 - self.beta) * ssim_loss
+        return combined
+
 if __name__ == "__main__":
     # Example usage:
     loss_fn = DiceSSIMLoss(beta=0.5)

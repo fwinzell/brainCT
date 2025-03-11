@@ -1,4 +1,4 @@
 saved_models/
-base/runs/
+base/
 *.ckpt
 *.pth

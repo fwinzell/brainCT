@@ -4,7 +4,7 @@ import argparse
 import datetime
 import numpy as np
 
-from brainCT.networks.gan_model import GUNet
+from brainCT.networks.gen_model import GUNet
 
 from monai.transforms import (
     Compose,

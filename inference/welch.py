@@ -69,7 +69,7 @@ if __name__ == "__main__":
         "unet_plus_fuse": os.path.join(save_dir, "unet_plus_plus_3d_2024-04-05", "version_0"),
         "unet_gated": os.path.join(save_dir, "unet_att_2024-04-03", "version_0"),
         "unet_fuse": os.path.join(save_dir, "unet_2024-04-03", "version_1"),
-        "gen_unet": os.path.join(save_dir, "gen_2024-04-10", "version_1")
+        "gen_unet": os.path.join(save_dir, "gen_2024-04-10", "version_0")
     }
 
     for i in range(0, 7):

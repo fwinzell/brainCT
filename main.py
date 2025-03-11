@@ -5,10 +5,10 @@ import datetime
 import numpy as np
 from torchsummary import summary
 
-from monai.networks.nets import AttentionUnet, UNETR, BasicUNetPlusPlus  # , UNet
+from monai.networks.nets import AttentionUnet, BasicUNetPlusPlus  # , UNet
 from brainCT.networks.unets import UNet, UNet3d_AG, UNet_PlusPlus4
 #from torchProject.unet.unet_model import UNetModel
-from pytorch_bcnn.models import BayesianUNet
+#from pytorch_bcnn.models import BayesianUNet
 from monai.transforms import (
     Compose,
     ToTensord,
@@ -17,7 +17,7 @@ from monai.transforms import (
     RandGaussianSmoothd
 )
 
-from brainCT.train_utils.data_loader import BrainXLDataset, VotingDataset, ConcatDataset
+from brainCT.train_utils.data_loader import BrainXLDataset, VotingDataset, SpectralDataset
 from brainCT.train_utils.modules import SegModule, SegModule3d
 
 os.environ['PYDEVD_USE_CYTHON'] = 'NO'
@@ -87,6 +87,22 @@ def seed_torch(seed=7):
 
 
 def get_model(config):
+    
+    if not hasattr(config, "n_pseudo"):
+        print("Setting n_pseudo to 3")
+        config.n_pseudo = 3
+    if not hasattr(config, "features"):
+        print("Default feature settings")
+        if config.model in ["unet", "unet_3d", "unet_att"]:
+            config.features = [24, 48, 96, 192, 384]
+        elif config.model in ["unet_plus_plus", "unet_plus_plus_3d"]:
+            config.features = [16, 32, 64, 128, 256, 16]
+    if not hasattr(config, "norm"):
+        config.norm = "instance"
+    if not hasattr(config, "n_classes"):
+        config.n_classes = 3
+    
+
     if config.model == "unet":
         return UNet(
             spatial_dims=2,
@@ -124,21 +140,18 @@ def get_model(config):
             features=tuple(config.features), #(16, 32, 64, 128, 256, 16),
             use_3d_input=True,
             dropout=0.0)
-    elif config.model == "unetr":
-        return UNETR(
-            in_channels=3,
+    elif config.model == "unet_3d":
+        return UNet(
+            spatial_dims=2,
+            in_channels=config.n_pseudo,
             out_channels=config.n_classes,
-            img_size=config.input_shape[1],
-            feature_size=16,
-            hidden_size=768,
-            mlp_dim=3072,
-            num_heads=12,
-            pos_embed="perceptron",
-            norm_name="instance",
-            res_block=True,
-            dropout_rate=0.0,
-            conv_block=True,
-            spatial_dims=2)
+            channels=(24, 48, 96, 192, 384), #tuple(config.features), #(24, 48, 96, 192, 384),
+            strides=(2, 2, 2, 2),
+            kernel_size=3,
+            up_kernel_size=3,
+            norm=config.norm,
+            use_3d_input=True,
+            out_channels_3d=8)
     elif config.model == "attention_unet":
         return AttentionUnet(
             spatial_dims=2,
@@ -146,14 +159,9 @@ def get_model(config):
             out_channels=config.n_classes,
             channels=(16, 32, 64, 128, 256),
             strides=(2, 2, 2, 2))
-    elif config.model == "bayesian_unet":
-        return BayesianUNet(ndim=2,
-                            in_channels=3,
-                            out_channels=config.n_classes,
-                            nlayer=4,
-                            nfilter=16)
     else:
         raise ValueError("Model not implemented")
+
 
 
 def train_unet(config):
@@ -165,8 +173,8 @@ def train_unet(config):
     one_case_per_seg = not config.use_3d_input
 
     # Removed due to insufficient quality on MRI image
-    # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
-    test_IDs = ["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "26_LB59", "33_ET51"]
+    # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42, "26_LB59"
+    # test_IDs = ["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "33_ET51"]
     IDs = ["5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
            "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39",
             "25_HH57", "28_LO45", "27_IL48", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"] # 3mm
@@ -199,8 +207,8 @@ def train_unet(config):
         train_dataset = BrainXLDataset(tr_cases, train_transforms, n_pseudo=config.n_pseudo)
         val_dataset = BrainXLDataset(val_cases, val_transforms, n_pseudo=config.n_pseudo)
     else:
-        train_dataset = ConcatDataset(tr_cases, train_transforms)
-        val_dataset = ConcatDataset(val_cases, val_transforms)
+        train_dataset = SpectralDataset(tr_cases, train_transforms)
+        val_dataset = SpectralDataset(val_cases, val_transforms)
 
     training_finished = False
     while not training_finished:

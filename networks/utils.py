@@ -15,7 +15,7 @@ class ConvLayer(nn.Module):
                  norm: str | tuple = "instance",
                  bias: bool = True,
                  dropout: float = 0.0,
-                 adn_ordering: str = "NDA",
+                 adn_ordering: str = "NAD",
                  conv_only: bool = False,
                  padding: int = 1,
                  output_padding: Sequence[int] | int = 0,

@@ -40,7 +40,7 @@ def get_dataset(config, test_IDs, i3d=False):
     return dataset
 
 
-def volume_results(config, model_path, test_IDs):
+def slice_area_sum(config, model_path, test_IDs):
     results = {"ID": [], "Class": [], "GT": [], "Pred": []}
     classes = ["WM", "GM", "CSF"]
 
@@ -126,10 +126,10 @@ if __name__ == "__main__":
     #   config.model = "unet_plus_plus_3d"
 
     # Removed due to insufficient quality on MRI image
-    # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
-    test_IDs = ["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "26_LB59", "33_ET51"]
+    # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42 26_LB59"
+    test_IDs = ["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "33_ET51"]
 
-    results = volume_results(config, model_path, test_IDs)
+    results = slice_area_sum(config, model_path, test_IDs)
 
     df = pd.DataFrame(results)
     csv_path = os.path.join("/home/fi5666wi/Brain_CT_MR_data/volumes_csv/", f"{model_name}-volume_results.csv")

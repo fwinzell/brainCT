@@ -10,13 +10,13 @@ def get_args():
 
     parser.add_argument("--model", "-m", type=str, default="unet_plus_plus",
                         help="unet, unet_plus_plus, unet_plus_plus_3d, unet_att, genunet")
-    parser.add_argument("--model_name", type=str, default="unet_plus_plus_2024-04-02/")
-    parser.add_argument("--version", "-v",  type=int, default=1)
+    parser.add_argument("--model_name", type=str, default="crossval_2025-01-21/unet_plus_plus_0")
+    parser.add_argument("--version", "-v",  type=int, default=0)
     args = parser.parse_args()
     return args
 
 def volume_bootstrap(config, model_path, gen=False):
-    test_IDs = np.array(["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "26_LB59", "33_ET51"])
+    test_IDs = np.array(["8_Ms59", "9_Kh43", "18_MN44", "19_LH64","33_ET51"])  # excluded: "26_LB59"
     res_dict = {}
 
     for ID in test_IDs:

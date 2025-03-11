@@ -11,6 +11,7 @@ import os
 from display_gui import load_gt_nii
 from faster_bootstrap import statistics, save_as_csv
 import yaml
+import pandas as pd
 
 def pad_image(image, target_shape=(256, 256, 256)):
     original_shape = image.shape[1:]
@@ -48,40 +49,47 @@ def load_ct_seg(ct_name, display=False):
     return ct_seg
 
 def calcul_dice_and_iou(ct_seg, gt, threshold=(0.5, 0.5, 0.5), display=False):
-    dsc = Dice(zero_division=np.nan, ignore_index=0)
+    dice = Dice(zero_division=np.nan, ignore_index=0)
     iou = JaccardIndex(task='binary')
-    ct_seg = np.concatenate((
+    (wm, gm, csf) = (
         np.expand_dims((ct_seg[0, :, :, :] > threshold[0]).astype(np.uint8), axis=0),
         np.expand_dims((ct_seg[1, :, :, :] > threshold[1]).astype(np.uint8), axis=0),
-        np.expand_dims((ct_seg[2, :, :, :] > threshold[2]).astype(np.uint8), axis = 0)), axis=0)
+        np.expand_dims((ct_seg[2, :, :, :] > threshold[2]).astype(np.uint8), axis = 0))
+    
+    gt = gt.astype(np.uint8)
+    (wm_t, gm_t, csf_t) = np.split(gt, 3, axis=0)
 
-    n_slices = ct_seg.shape[1]
-    dice_scores = np.zeros((n_slices, 3))
-    iou_scores = np.zeros((n_slices, 3))
-    for j in range(n_slices):
-        ctslice = ct_seg[:, j, :, :]
-        gtslice = gt[:, j, :, :].astype(np.uint8)
+    ious = [iou(torch.from_numpy(wm), torch.from_numpy(wm_t)).item(),
+            iou(torch.from_numpy(gm), torch.from_numpy(gm_t)).item(),
+            iou(torch.from_numpy(csf), torch.from_numpy(csf_t)).item()]
+    dscs = [dice(torch.from_numpy(wm), torch.from_numpy(wm_t)).item(),
+            dice(torch.from_numpy(gm), torch.from_numpy(gm_t)).item(),
+            dice(torch.from_numpy(csf), torch.from_numpy(csf_t)).item()]
 
-        for i in range(3):
-            pred = torch.tensor(ctslice[i, :, :])
-            tar = torch.tensor(gtslice[i, :, :])
-            dice_scores[j, i] = dsc(pred, tar).item()
-            iou_scores[j, i] = iou(pred, tar).item()
 
-        ctslice = np.moveaxis(np.uint8(ctslice * 255), source=0, destination=-1)
-        gtslice = np.moveaxis(np.uint8(gtslice * 255), source=0, destination=-1)
+    if display:
+        n_slices = ct_seg.shape[1]
 
-        if display:
+        for j in range(n_slices):
+            ctslice = np.concatenate((wm[:, j, :, :], gm[:, j, :, :], csf[:, j, :, :]), axis=0).astype(np.uint8)
+            gtslice = gt[:, j, :, :].astype(np.uint8)
+
+
+            ctslice = np.moveaxis(np.uint8(ctslice * 255), source=0, destination=-1)
+            gtslice = np.moveaxis(np.uint8(gtslice * 255), source=0, destination=-1)
+
+            
             cv2.imshow('CTseg', ctslice)
             cv2.imshow('GT', gtslice)
             cv2.waitKey(10)
 
-    return np.nanmean(dice_scores, axis=0), np.nanmean(iou_scores, axis=0)
+    return {'Dice': dscs, 'IoU': ious}
+
 
 def ctseg_results(ID):
     print(f"CT: {ID}")
     ct_seg = load_ct_seg(ID, display=False)
-    gt = load_gt_nii(f"/home/fi5666wi/Brain_CT_MR_data/DL/{ID}_seg3.nii", select_all=True)
+    gt, _ = load_gt_nii(f"/home/fi5666wi/Brain_CT_MR_data/DL/{ID}_seg3.nii", select_all=True)
     dice_scores, iou_scores = calcul_dice_and_iou(ct_seg, gt, threshold=(0.1, 0.5, 0.9), display=False)
     print(f"Dice scores (WM/GM/CSF): {np.around(dice_scores, decimals=4)}")
     print(f"IoU scores (WM/GM/CSF): {np.around(iou_scores, decimals=4)}")
@@ -90,7 +98,7 @@ def ctseg_results(ID):
 
 
 def volume_bootstrap(save_path):
-    test_IDs = np.array(["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "26_LB59", "33_ET51"])
+    test_IDs = np.array(["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "33_ET51"])
     res_dict = {}
 
     for ID in test_IDs:
@@ -127,32 +135,77 @@ def volume_bootstrap(save_path):
     save_as_csv(stats, os.path.join(save_path, "vol_stats.csv"))
 
 
-def run_ctseg():
-    # ct_seg = load_ct_seg("8_Ms59", display=True)
+def run_ctseg(IDs, save=False):
+    results = {}
+    volume_results = {"ID": [], "Class": [], "GT": [], "Pred": []}
+    classes = ["WM", "GM", "CSF"]
 
-    test_IDs = ["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "26_LB59", "33_ET51"]
+    for k, ct_name in enumerate(IDs):
+        # Dice and IoU calculations
+        print(f"CT: {ct_name}")
+        ct_seg = load_ct_seg(ct_name, display=False)
+        gt, _ = load_gt_nii(f"/home/fi5666wi/Brain_CT_MR_data/DL/{ct_name}_seg3.nii", select_all=True)
+        metrics = calcul_dice_and_iou(ct_seg, gt, threshold=(0.1, 0.5, 0.9), display=True)
+        print(f"Dice scores (WM/GM/CSF): {np.around(metrics['Dice'], decimals=4)}")
+        print(f"IoU scores (WM/GM/CSF): {np.around(metrics['IoU'], decimals=4)}")
+        results[ct_name] = metrics
+
+        # Volume calculations
+        vol_res = get_volume_results(ct_seg, gt)
+        avd = np.abs(vol_res["GT"] - vol_res["Pred"]) / vol_res["GT"]
+        print(f"AVD: WM = {avd[0]*100}%, GM = {avd[1]*100}%, CSF = {avd[2]*100}%")
+
+        volume_results["ID"].extend([ct_name] * 3)
+        for i, c in enumerate(classes):
+            volume_results["Class"].append(c)
+            volume_results["GT"].append(vol_res["GT"][i])
+            volume_results["Pred"].append(vol_res["Pred"][i])
+
+    dice_res = [results[cid]["Dice"] for cid in IDs]
+    iou_res = [results[cid]["IoU"] for cid in IDs]
+
+    print(f"Average dice scores (WM/GM/CSF): {np.around(np.mean(dice_res, axis=0), decimals=4)}")
+    print(f"Average IoU scores (WM/GM/CSF): {np.around(np.mean(iou_res, axis=0), decimals=4)}")
+
+    # Save results
+    if save:
+        table = {"ID": test_IDs, "Dice_WM": [res[0] for res in dice_res], "Dice_GM": [res[1] for res in dice_res],
+                "Dice_CSF": [res[2] for res in dice_res]}
+        res_df = pd.DataFrame(table)
+        res_df.to_csv(f"/home/fi5666wi/Brain_CT_MR_data/ensemble_results/ct_seg.csv")
+
+        save_volume_results(volume_results)
+
+
+def get_volume_results(seg, gt):
+    gt_volumes = np.sum(gt, axis=(1, 2, 3))
+    seg_volumes = np.sum(seg, axis=(1, 2, 3))
+
+    return {"GT": gt_volumes, "Pred": seg_volumes}
+
+
+def save_volume_results(results):
+    df = pd.DataFrame(results)
+    csv_path = os.path.join("/home/fi5666wi/Brain_CT_MR_data/volumes_csv/", f"ctseg-volume_results.csv")
+    i = 1
+    while os.path.exists(csv_path):
+        csv_path = csv_path.replace(".csv", f"_{i}.csv")
+        i += 1
+    df.to_csv(csv_path, index=False)
+
+
+if __name__ == "__main__":
+    #volume_bootstrap("/home/fi5666wi/Python/Brain-CT/ctseg/")
+
+    test_IDs = ["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "33_ET51"]
     IDs = ["5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
            "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39",
            "25_HH57", "28_LO45", "27_IL48", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"]
+    
+    run_ctseg(test_IDs, save=True)
 
-    dice_scores = np.zeros((len(IDs), 3))
-    iou_scores = np.zeros((len(IDs), 3))
-    for k, ct_name in enumerate(IDs):
-        print(f"CT: {ct_name}")
-        ct_seg = load_ct_seg(ct_name, display=False)
-        gt = load_gt_nii(f"/home/fi5666wi/Brain_CT_MR_data/DL/{ct_name}_seg3.nii", select_all=True)
-        dice_scores[k, :], iou_scores[k, :] = calcul_dice_and_iou(ct_seg, gt, threshold=(0.1, 0.5, 0.9), display=True)
-        print(f"Dice scores (WM/GM/CSF): {np.around(dice_scores[k, :], decimals=4)}")
-        print(f"IoU scores (WM/GM/CSF): {np.around(iou_scores[k, :], decimals=4)}")
 
-    print(f"Mean dice scores (WM/GM/CSF): {np.around(np.mean(dice_scores, axis=0), decimals=4)}")
-
-    # gt = load_gt_nii("/home/fi5666wi/Brain_CT_MR_data/DL/8_Ms59_seg3.nii", select_all=True)
-
-    # display_dice(ct_seg, gt, threshold=0.5)
-
-if __name__ == "__main__":
-    volume_bootstrap("/home/fi5666wi/Python/Brain-CT/ctseg/")
+    
 
 
 

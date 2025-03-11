@@ -16,6 +16,7 @@ from monai.transforms import (
     RandAffined,
     ScaleIntensityd,
     RandGaussianSmoothd,
+    RandZoomd,
     AsDiscrete
 )
 
@@ -67,8 +68,8 @@ def get_model(config):
 def parse_config():
     parser = argparse.ArgumentParser("argument for run segmentation pipeline")
 
-    parser.add_argument("--model", type=str, default="unet_plus_plus", help="unet, unet_plus_plus")
-    parser.add_argument("--features", nargs="+", type=int, default=[16, 32, 64, 128, 256, 32])
+    parser.add_argument("--model", type=str, default="unet", help="unet, unet_plus_plus")
+    parser.add_argument("--features", nargs="+", type=int, default=[24, 48, 96, 192, 384])
     # [16, 32, 64, 128, 256, 32] for UNet++ = 2.3M
     # [24, 48, 96, 192, 384] for UNet = 3.7M
     # [24, 48, 96, 192, 384, 48] for UNet++ = 5.1M
@@ -82,14 +83,16 @@ def parse_config():
 
     parser.add_argument("--only_70", type=bool, default=False, help="True if only 70 energy level is used")
     parser.add_argument("--only_50", type=bool, default=False, help="True if only 50 energy level is used")
-    parser.add_argument("--only_120", type=bool, default=True, help="True if only 120 energy level is used")
+    parser.add_argument("--only_120", type=bool, default=False, help="True if only 120 energy level is used")
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("-e", "--epochs", type=int, default=99)
-    parser.add_argument("--num_folds", type=int, default=5)  # For cross-validation, 4 or 5 (without/with 3mm)
+    parser.add_argument("--num_folds", type=int, default=7)  # For cross-validation, 4 or 5 (without/with 3mm)
     parser.add_argument("--input_shape", nargs=3, type=int, default=[256, 256])
+    parser.add_argument("--warm_up_epochs", type=int, default=0, help="Number of warm-up epochs, can be set to zero. During warm up, each instance in every batch will contain all classes")
+
     parser.add_argument("--learning_rate", type=float, default=1e-2)
     parser.add_argument("--shuffle", type=bool, default=True)
-    parser.add_argument("--loss", type=str, default="dice", help="dice, gdl, tversky")
+    parser.add_argument("--loss", type=str, default="multiclass", help="dice, gdl, tversky, multiclass")
     parser.add_argument("--class_weights", nargs=3, type=float, default=None)
     # [0.87521193,  0.85465177, 10.84828136] 1E7/total_volumes
     # [ 0.2663065 ,  0.25394151, 40.91449388] N^2/(total_volumes^2 * 1E4)
@@ -144,6 +147,7 @@ def train_model(config, save_dir, train_dataset, val_dataset):
             class_weights=config.class_weights,
             sigmoid=config.sigmoid,
             lr_schedule="multistep",
+            warm_up_epochs=config.warm_up_epochs,
             start_ep=0
         )
 
@@ -192,8 +196,8 @@ def run_cross_val(config, spectral_mode=False, n_folds=4, one_level_per_case=Fal
         energies = [50, 70, 120]
 
     # Removed due to insufficient quality on MRI image
-    # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42
-    test_IDs = ["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "26_LB59", "33_ET51"]
+    # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42, "26_LB59",´
+    #test_IDs = ["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "33_ET51"]
     IDs = ["5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
            "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39",
            "25_HH57", "28_LO45", "27_IL48", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"]
@@ -202,10 +206,13 @@ def run_cross_val(config, spectral_mode=False, n_folds=4, one_level_per_case=Fal
         [RandAffined(keys=["img", "seg"], mode=["bilinear", "nearest"], prob=0.9, shear_range=[(0.1), (0.1), (0.1)]),
          ToTensord(keys=["img", "seg"]),
          RandGaussianSmoothd(keys="img", prob=0.5, sigma_x=(0.2, 2.0), sigma_y=(0.2, 2.0), sigma_z=(0.5, 1.5)),
+         RandZoomd(keys=["img", "seg"], mode=["bilinear", "nearest"],
+                   prob=0.5, min_zoom=1.0, max_zoom=1.5),
          ScaleIntensityd(keys="img", minv=0.0, maxv=1.0)])
     val_transforms = Compose([ToTensord(keys=["img", "seg"]),
                               ScaleIntensityd(keys="img", minv=0.0, maxv=1.0)])
-
+    
+    
     if config.shuffle:
         random.shuffle(IDs)
         #random.shuffle(ids_3mm)
@@ -368,5 +375,6 @@ if __name__ == "__main__":
     config = parse_config()
     config.date = str(datetime.date.today())
     seed_torch(config.seed)
+    random.seed(config.seed)
 
     run_cross_val(config, spectral_mode=False, n_folds=config.num_folds)

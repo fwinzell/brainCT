@@ -47,7 +47,7 @@ class InputBlock3d(nn.Module):
                  norm: str = "instance",
                  bias: bool = True,
                  dropout: float = 0.0,
-                 adn_ordering: str = "NDA",
+                 adn_ordering: str = "NAD",
                  conv_only: bool = False,
                  ):
         super(InputBlock3d, self).__init__()
@@ -87,11 +87,11 @@ class InputBlock3d(nn.Module):
 
     def forward(self, x):
         # Apply each convolutional layer in parallel
-        parallel_outputs = [conv(torch.squeeze(x[:, i])) for i, conv in enumerate(self.conv_layers)]
+        parallel_outputs = [conv(torch.squeeze(x[:, i], dim=1)) for i, conv in enumerate(self.conv_layers)]
 
         # Add a batch dimension if necessary
-        if x.shape[0] == 1:
-            parallel_outputs = [torch.unsqueeze(output, 0) for output in parallel_outputs]
+        #if x.shape[0] == 1:
+        #    parallel_outputs = [torch.unsqueeze(output, 0) for output in parallel_outputs]
 
         # Combine the outputs (you may use other methods to combine the outputs based on your task)
         combined_output = torch.cat(parallel_outputs, dim=self.cat_dim)
@@ -135,7 +135,7 @@ class EncoderBlock(nn.Module):
                  norm: str = "instance",
                  bias: bool = True,
                  dropout: float = 0.0,
-                 adn_ordering: str = "NDA",
+                 adn_ordering: str = "NAD",
                  conv_only: bool = False,
                  ):
         super(EncoderBlock, self).__init__()
@@ -227,7 +227,7 @@ class DecoderBlock(nn.Module):
                  norm: str = "instance",
                  bias: bool = True,
                  dropout: float = 0.0,
-                 adn_ordering: str = "NDA",
+                 adn_ordering: str = "NAD",
                  last_conv_only: bool = False,
                  ):
         super(DecoderBlock, self).__init__()
@@ -301,6 +301,8 @@ class UNet(nn.Module):
         adn_ordering: a string representing the ordering of activation (A), normalization (N), and dropout (D).
             Defaults to "NDA".
         mode: which convolution to use, ``conv`` for regular convolution, ``separable`` for separable convolution.
+        use_3d_input: whether to use 3D input. Defaults to False.
+        out_channels_3d: number of output channels in the input layer for 3D input. These will be concatenated, and convoluted to match the input channels.
     """
 
     def __init__(
@@ -316,7 +318,7 @@ class UNet(nn.Module):
             norm: str = "instance",
             dropout: float = 0.0,
             bias: bool = True,
-            adn_ordering: str = "NDA",
+            adn_ordering: str = "NAD",
             mode: str = "conv",
             use_3d_input: bool = False,
             out_channels_3d: int = None,
@@ -536,7 +538,7 @@ class UNet3d_AG(UNet):
             norm: str = "instance",
             dropout: float = 0.0,
             bias: bool = True,
-            adn_ordering: str = "NDA",
+            adn_ordering: str = "NAD",
             mode: str = "conv",
     ) -> None:
         super().__init__(
@@ -605,42 +607,6 @@ class UNet3d_AG(UNet):
         )
         return mod
 
-
-class UNet_DeepFusion(UNet):
-    def __init__(
-            self,
-            in_channels: int,
-            out_channels: int,
-            out_channels_3d: int,
-            channels: Sequence[int],
-            strides: Sequence[int],
-            n_inputs: int = 3,
-            kernel_size: Sequence[int] | int = 3,
-            up_kernel_size: Sequence[int] | int = 3,
-            act: str = "PReLU",
-            norm: str = "instance",
-            dropout: float = 0.0,
-            bias: bool = True,
-            adn_ordering: str = "NDA",
-            mode: str = "conv",
-    ) -> None:
-        super().__init__(
-            spatial_dims=2,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            out_channels_3d=out_channels_3d,
-            channels=channels,
-            strides=strides,
-            kernel_size=kernel_size,
-            up_kernel_size=up_kernel_size,
-            act=act,
-            norm=norm,
-            dropout=dropout,
-            bias=bias,
-            adn_ordering=adn_ordering,
-            mode=mode,
-            use_3d_input=True,
-        )
 
 
 class UNet_PlusPlus4(nn.Module):
@@ -814,15 +780,16 @@ def unet_summary(model, input_size):
 
 
 if __name__ == "__main__":
-    unet = UNet(spatial_dims=2,
-                in_channels=3,
-                out_channels=3,
-                channels=(16, 32, 64, 128, 256),
-                strides=(2, 2, 2, 2),
-                kernel_size=3,
-                up_kernel_size=3,
-                use_3d_input=False,
-                out_channels_3d=8)
+    unet = UNet(
+            spatial_dims=2,
+            in_channels=3,
+            out_channels=3,
+            channels=(24, 48, 96, 192, 384),
+            strides=(2, 2, 2, 2),
+            kernel_size=3,
+            up_kernel_size=3,
+            use_3d_input=True,
+            out_channels_3d=8)
 
     unet_att = UNet3d_AG(in_channels=3,
                          out_channels=3,
@@ -848,7 +815,7 @@ if __name__ == "__main__":
         dropout=0.0)
 
     #summary(unet_att.to(device), (3, 3, 256, 256))
-    summary(basic_unetpp.to(device), (3, 256, 256))
-    summary(unet.to(device), ( 3, 256, 256))
+    #summary(basic_unetpp.to(device), (3, 256, 256))
+    summary(unet.to(device), (3, 3, 256, 256))
     #summary(unet_plus_plus.to(device), (3, 3, 256, 256))
     # unet_summary(unet_att.to(device), (2, 3, 3, 256, 256))
