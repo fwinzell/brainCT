@@ -11,7 +11,8 @@ from monai.transforms import (
     AsDiscrete
 )
 from monai.networks.nets import UNet
-from torchmetrics import Dice, JaccardIndex
+from torchmetrics import JaccardIndex
+from torchmetrics.segmentation import DiceScore
 from monai.metrics import HausdorffDistanceMetric
 import SimpleITK as sitk
 
@@ -41,7 +42,7 @@ def eval(config, test_IDs, save=False, level=70, save_name="model", display=True
     model.eval()
     binarize = AsDiscrete(threshold=0.5)
 
-    dsc = Dice(zero_division=np.nan, ignore_index=0)  # DiceMetric(include_background=True)
+    dsc = DiceScore(zero_division=np.nan, ignore_index=0)  # DiceMetric(include_background=True)
     iou = JaccardIndex(task='binary')  # MeanIoU(include_background=True)
     hdm = HausdorffDistanceMetric(include_background=True, percentile=95.0)
     dice_scores = np.zeros((len(loader), config.n_classes))

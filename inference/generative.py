@@ -11,7 +11,7 @@ from monai.transforms import (
     AsDiscrete
 )
 from monai.networks.nets import UNet
-from torchmetrics import Dice, JaccardIndex
+from torchmetrics import JaccardIndex
 from monai.metrics import HausdorffDistanceMetric
 import SimpleITK as sitk
 from time import process_time, time
@@ -293,17 +293,22 @@ if __name__ == "__main__":
 
     # Ensemble
     cv_out_dir = os.path.join("/home/fi5666wi/Brain_CT_MR_data/OUT/", model_name)
-    ensemble_results = ensemble(test_IDs, cv_out_dir, save=True, save_name=model_name)
+    ensemble_results = ensemble(test_IDs, cv_out_dir, save=False, save_name=model_name)
 
     dice_res = [ensemble_results[cid]["Dice"] for cid in test_IDs]
+    haus_res = [ensemble_results[cid]["HSD"] for cid in test_IDs]
     t_res = [ensemble_results[cid]["Time"] for cid in test_IDs]
 
     print(f"Ensemble dice scores (WM/GM/CSF): {np.around(np.mean(dice_res, axis=0), decimals=4)}")
+    print(f"Ensemble Hausdorff distances (WM/GM/CSF): {np.around(np.mean(haus_res, axis=0), decimals=4)}")
 
     # Save results
     table = {"ID": test_IDs, "Dice_WM": [res[0] for res in dice_res], "Dice_GM": [res[1] for res in dice_res],
-             "Dice_CSF": [res[2] for res in dice_res], "Time": t_res} 
+             "Dice_CSF": [res[2] for res in dice_res], 
+             "HSD_WM": [res[0] for res in haus_res], "HSD_GM": [res[1] for res in haus_res],
+             "HSD_CSF": [res[2] for res in haus_res],
+             "Time": t_res} 
     ens_df = pd.DataFrame(table)
-    ens_df.to_csv(f"/home/fi5666wi/Brain_CT_MR_data/ensemble_results/{model_name}.csv")
+    ens_df.to_csv(f"/home/fi5666wi/Brain_CT_MR_data/ensemble_results/{model_name}_new.csv")
 
 

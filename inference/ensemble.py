@@ -12,7 +12,8 @@ from monai.transforms import (
     AsDiscrete
 )
 from monai.networks.nets import UNet
-from torchmetrics import Dice, JaccardIndex
+from brainCT.train_utils.metrics import DiceScore
+from torchmetrics import JaccardIndex
 from monai.metrics import HausdorffDistanceMetric
 import SimpleITK as sitk
 
@@ -124,54 +125,62 @@ def eval_with_ensemble(cv_dir, test_IDs, config, save=False, save_name="model", 
 
 def calculate_metrics(seg, gt):
     gt = gt.astype(np.uint8)
-    dice = Dice(zero_division=np.nan, ignore_index=0)
-    iou = JaccardIndex(task='binary')
+    dice = DiceScore(include_background=False, zero_division=np.nan)
+    #iou = JaccardIndex(task='binary')
+    hsd = HausdorffDistanceMetric(include_background=False, distance_metric='euclidean', percentile=95.0)
 
     (wm, gm, csf) = np.split(seg, 3, axis=0)
     (wm_t, gm_t, csf_t) = np.split(gt, 3, axis=0)
-    ious = [iou(torch.from_numpy(wm), torch.from_numpy(wm_t)).item(),
-            iou(torch.from_numpy(gm), torch.from_numpy(gm_t)).item(),
-            iou(torch.from_numpy(csf), torch.from_numpy(csf_t)).item()]
-    dscs = [dice(torch.from_numpy(wm), torch.from_numpy(wm_t)).item(),
-            dice(torch.from_numpy(gm), torch.from_numpy(gm_t)).item(),
-            dice(torch.from_numpy(csf), torch.from_numpy(csf_t)).item()]
+    haus = [hsd(torch.from_numpy(wm).unsqueeze(dim=0), torch.from_numpy(wm_t).unsqueeze(dim=0)).item(),
+            hsd(torch.from_numpy(gm).unsqueeze(dim=0), torch.from_numpy(gm_t).unsqueeze(dim=0)).item(),
+            hsd(torch.from_numpy(csf).unsqueeze(dim=0), torch.from_numpy(csf_t).unsqueeze(dim=0)).item()]
+    dscs = [dice(torch.from_numpy(wm), torch.from_numpy(wm_t)),
+            dice(torch.from_numpy(gm), torch.from_numpy(gm_t)),
+            dice(torch.from_numpy(csf), torch.from_numpy(csf_t))]
 
-    return {'Dice': dscs, 'IoU': ious}
+    return {'Dice': dscs, 'HSD': haus}
 
 if __name__ == "__main__":
     save_dir = "/home/fi5666wi/Python/Brain-CT/saved_models"
-    model_name = "crossval_2025-01-31"
-    cv_dir = os.path.join(save_dir, model_name, "unet_0")
+    model_names = ["crossval_2025-01-27", "crossval_2025-01-28", "crossval_2025-01-30", "crossval_2025-01-21", "crossval_2025-01-23"]
+    archs = ["unet_3d_0", "unet_plus_plus_3d_0", "unet_att_0", "unet_plus_plus_0", "unet_plus_plus_baseline"]
 
-    if os.path.exists(os.path.join(cv_dir, 'version_1', 'config.yaml')):
-        with open(os.path.join(cv_dir, 'version_1', 'config.yaml'), "r") as f:
-            config = yaml.safe_load(f)
-            config = Namespace(**config)
-    else:
-        config = parse_config()
+    for i in range(len(model_names)):
+        model_name = model_names[i]
+        cv_dir = os.path.join(save_dir, model_name, archs[i])
 
-    # Removed due to insufficient quality on MRI imageE
-    # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42 "26_LB59"
-    test_IDs = ["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "33_ET51"]
-    IDs = ["5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
-           "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39",
-           "25_HH57", "28_LO45", "27_IL48", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"]  # 3mm
+        if os.path.exists(os.path.join(cv_dir, 'version_1', 'config.yaml')):
+            with open(os.path.join(cv_dir, 'version_1', 'config.yaml'), "r") as f:
+                config = yaml.safe_load(f)
+                config = Namespace(**config)
+        else:
+            config = parse_config()
 
-    results = eval_with_ensemble(cv_dir, test_IDs, config, save=True, save_name=f"{model_name}_ensemble", prob_map=True)
+        # Removed due to insufficient quality on MRI imageE
+        # 1_BN52, 2_CK79, 3_CL44, 4_JK77, 6_MBR57, 12_AA64, 29_MS42 "26_LB59"
+        test_IDs = ["8_Ms59", "9_Kh43", "18_MN44", "19_LH64", "33_ET51"]
+        IDs = ["5_Kg40", "7_Mc43", "10_Ca58", "11_Lh96", "13_NK51", "14_SK41", "15_LL44",
+            "16_KS44", "17_AL67", "20_AR94", "21_JP42", "22_CM63", "23_SK52", "24_SE39",
+            "25_HH57", "28_LO45", "27_IL48", "30_MJ80", "31_EM88", "32_EN56", "34_LO45"]  # 3mm
 
-    dice_res = [results[cid]["Dice"] for cid in test_IDs]
-    iou_res = [results[cid]["IoU"] for cid in test_IDs]
-    t_res = [results[cid]["Time"] for cid in test_IDs]
+        results = eval_with_ensemble(cv_dir, test_IDs, config, save=False, save_name=f"{model_name}_ensemble", prob_map=True)
 
-    print(f"Average dice scores (WM/GM/CSF): {np.around(np.mean(dice_res, axis=0), decimals=4)}")
-    print(f"Average IoU scores (WM/GM/CSF): {np.around(np.mean(iou_res, axis=0), decimals=4)}")
-    print(f"Average time per volume: {np.mean(t_res)}s")
+        dice_res = [results[cid]["Dice"] for cid in test_IDs]
+        haus_res = [results[cid]["HSD"] for cid in test_IDs]
+        t_res = [results[cid]["Time"] for cid in test_IDs]
 
-    # Save results
-    table = {"ID": test_IDs, "Dice_WM": [res[0] for res in dice_res], "Dice_GM": [res[1] for res in dice_res],
-             "Dice_CSF": [res[2] for res in dice_res], "Time": t_res}
-             #"IoU_WM": [res[0] for res in iou_res],
-             #"IoU_GM": [res[1] for res in iou_res], "IoU_CSF": [res[2] for res in iou_res], 
-    res_df = pd.DataFrame(table)
-    res_df.to_csv(f"/home/fi5666wi/Brain_CT_MR_data/ensemble_results/{model_name}.csv")
+        print(f"Average dice scores (WM/GM/CSF): {np.around(np.mean(dice_res, axis=0), decimals=4)}")
+        print(f"Average 95%HSD (WM/GM/CSF): {np.around(np.mean(haus_res, axis=0), decimals=4)}")
+        print(f"Average time per volume: {np.mean(t_res)}s")
+
+        # Save results
+        table = {"ID": test_IDs, "Dice_WM": [res[0] for res in dice_res], "Dice_GM": [res[1] for res in dice_res],
+                "Dice_CSF": [res[2] for res in dice_res], 
+                "HSD_WM": [res[0] for res in haus_res], "HSD_GM": [res[1] for res in haus_res],
+                "HSD_CSF": [res[2] for res in haus_res],
+                "Time": t_res}
+                #"IoU_WM": [res[0] for res in iou_res],
+                #"IoU_GM": [res[1] for res in iou_res], "IoU_CSF": [res[2] for res in iou_res], 
+        res_df = pd.DataFrame(table)
+        res_df.to_csv(f"/home/fi5666wi/Brain_CT_MR_data/ensemble_results/{model_name}_new.csv")
     

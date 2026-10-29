@@ -10,7 +10,8 @@ import cv2
 from monai.data import DataLoader
 from monai.losses import DiceLoss, GeneralizedDiceLoss, TverskyLoss, SSIMLoss
 from monai.transforms import AsDiscrete
-from torchmetrics import Dice, JaccardIndex
+from torchmetrics import JaccardIndex
+from torchmetrics.segmentation import DiceScore
 
 from brainCT.train_utils.losses import DiceSSIMLoss, FocalSSIMLoss, CESSIMLoss, DiceCESSIMLoss, MultiClassDiceLoss, MCDiceCESSIMLoss
 from brainCT.train_utils.data_loader import WarmUpSampler
@@ -70,7 +71,7 @@ class SegModule(object):
         else:
             assert False, f'Unknown loss: "{loss}"'
 
-        self.dice = Dice(zero_division=np.nan, ignore_index=0).to(self.device)
+        self.dice = DiceScore(zero_division=np.nan, ignore_index=0).to(self.device)
         self.iou = JaccardIndex(task='binary')
         self.example_input_array = torch.rand(4, 3, 256, 256)
 

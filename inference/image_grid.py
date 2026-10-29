@@ -107,7 +107,7 @@ def matplotgrid(images, nrow, ncol, column_titles=None, save=False):
     
     plt.tight_layout(pad=0.2)
     if save:
-        plt.savefig("/home/fi5666wi/Brain_CT_MR_data/plots/grid_2.png", dpi = 500)
+        plt.savefig("/home/fi5666wi/Brain_CT_MR_data/plots/grid_thesis.png", dpi = 500)
     plt.show()
 
 

@@ -5,8 +5,9 @@ import cv2
 import tkinter as tk
 from tkinter import messagebox
 from PIL import Image, ImageTk
-from torchmetrics import Dice, JaccardIndex
+#from torchmetrics import Dice, JaccardIndex
 from monai.metrics import HausdorffDistanceMetric
+from brainCT.train_utils.metrics import DiceScore
 import os
 from display_gui import load_gt_nii
 from faster_bootstrap import statistics, save_as_csv
@@ -48,9 +49,9 @@ def load_ct_seg(ct_name, display=False):
 
     return ct_seg
 
-def calcul_dice_and_iou(ct_seg, gt, threshold=(0.5, 0.5, 0.5), display=False):
-    dice = Dice(zero_division=np.nan, ignore_index=0)
-    iou = JaccardIndex(task='binary')
+def calcul_dice_and_hsd(ct_seg, gt, threshold=(0.5, 0.5, 0.5), display=False):
+    dice = DiceScore(include_background=False, zero_division=np.nan)
+    hsd = HausdorffDistanceMetric(include_background=False, distance_metric='euclidean', percentile=95.0)
     (wm, gm, csf) = (
         np.expand_dims((ct_seg[0, :, :, :] > threshold[0]).astype(np.uint8), axis=0),
         np.expand_dims((ct_seg[1, :, :, :] > threshold[1]).astype(np.uint8), axis=0),
@@ -59,12 +60,12 @@ def calcul_dice_and_iou(ct_seg, gt, threshold=(0.5, 0.5, 0.5), display=False):
     gt = gt.astype(np.uint8)
     (wm_t, gm_t, csf_t) = np.split(gt, 3, axis=0)
 
-    ious = [iou(torch.from_numpy(wm), torch.from_numpy(wm_t)).item(),
-            iou(torch.from_numpy(gm), torch.from_numpy(gm_t)).item(),
-            iou(torch.from_numpy(csf), torch.from_numpy(csf_t)).item()]
-    dscs = [dice(torch.from_numpy(wm), torch.from_numpy(wm_t)).item(),
-            dice(torch.from_numpy(gm), torch.from_numpy(gm_t)).item(),
-            dice(torch.from_numpy(csf), torch.from_numpy(csf_t)).item()]
+    haus = [hsd(torch.from_numpy(wm).unsqueeze(dim=0), torch.from_numpy(wm_t).unsqueeze(dim=0)).item(),
+            hsd(torch.from_numpy(gm).unsqueeze(dim=0), torch.from_numpy(gm_t).unsqueeze(dim=0)).item(),
+            hsd(torch.from_numpy(csf).unsqueeze(dim=0), torch.from_numpy(csf_t).unsqueeze(dim=0)).item()]
+    dscs = [dice(torch.from_numpy(wm), torch.from_numpy(wm_t)),
+            dice(torch.from_numpy(gm), torch.from_numpy(gm_t)),
+            dice(torch.from_numpy(csf), torch.from_numpy(csf_t))]
 
 
     if display:
@@ -83,18 +84,18 @@ def calcul_dice_and_iou(ct_seg, gt, threshold=(0.5, 0.5, 0.5), display=False):
             cv2.imshow('GT', gtslice)
             cv2.waitKey(10)
 
-    return {'Dice': dscs, 'IoU': ious}
+    return {'Dice': dscs, 'HSD': haus}
 
 
 def ctseg_results(ID):
     print(f"CT: {ID}")
     ct_seg = load_ct_seg(ID, display=False)
     gt, _ = load_gt_nii(f"/home/fi5666wi/Brain_CT_MR_data/DL/{ID}_seg3.nii", select_all=True)
-    dice_scores, iou_scores = calcul_dice_and_iou(ct_seg, gt, threshold=(0.1, 0.5, 0.9), display=False)
+    dice_scores, haus_scores = calcul_dice_and_hsd(ct_seg, gt, threshold=(0.1, 0.5, 0.9), display=False)
     print(f"Dice scores (WM/GM/CSF): {np.around(dice_scores, decimals=4)}")
-    print(f"IoU scores (WM/GM/CSF): {np.around(iou_scores, decimals=4)}")
+    print(f"95% HSD scores (WM/GM/CSF): {np.around(haus_scores, decimals=4)}")
 
-    return {"Dice": dice_scores, "IoU": iou_scores}
+    return {"Dice": dice_scores, "HSD": haus_scores}
 
 
 def volume_bootstrap(save_path):
@@ -145,9 +146,9 @@ def run_ctseg(IDs, save=False):
         print(f"CT: {ct_name}")
         ct_seg = load_ct_seg(ct_name, display=False)
         gt, _ = load_gt_nii(f"/home/fi5666wi/Brain_CT_MR_data/DL/{ct_name}_seg3.nii", select_all=True)
-        metrics = calcul_dice_and_iou(ct_seg, gt, threshold=(0.1, 0.5, 0.9), display=True)
+        metrics = calcul_dice_and_hsd(ct_seg, gt, threshold=(0.1, 0.5, 0.9), display=True)
         print(f"Dice scores (WM/GM/CSF): {np.around(metrics['Dice'], decimals=4)}")
-        print(f"IoU scores (WM/GM/CSF): {np.around(metrics['IoU'], decimals=4)}")
+        print(f"95% HSD scores (WM/GM/CSF): {np.around(metrics['HSD'], decimals=4)}")
         results[ct_name] = metrics
 
         # Volume calculations
@@ -162,17 +163,19 @@ def run_ctseg(IDs, save=False):
             volume_results["Pred"].append(vol_res["Pred"][i])
 
     dice_res = [results[cid]["Dice"] for cid in IDs]
-    iou_res = [results[cid]["IoU"] for cid in IDs]
+    haus_res = [results[cid]["HSD"] for cid in IDs]
 
     print(f"Average dice scores (WM/GM/CSF): {np.around(np.mean(dice_res, axis=0), decimals=4)}")
-    print(f"Average IoU scores (WM/GM/CSF): {np.around(np.mean(iou_res, axis=0), decimals=4)}")
+    print(f"Average HSD scores (WM/GM/CSF): {np.around(np.mean(haus_res, axis=0), decimals=4)}")
 
     # Save results
     if save:
         table = {"ID": test_IDs, "Dice_WM": [res[0] for res in dice_res], "Dice_GM": [res[1] for res in dice_res],
-                "Dice_CSF": [res[2] for res in dice_res]}
+                "Dice_CSF": [res[2] for res in dice_res],
+                "HSD_WM": [res[0] for res in haus_res], "HSD_GM": [res[1] for res in haus_res],
+                "HSD_CSF": [res[2] for res in haus_res]}
         res_df = pd.DataFrame(table)
-        res_df.to_csv(f"/home/fi5666wi/Brain_CT_MR_data/ensemble_results/ct_seg.csv")
+        res_df.to_csv(f"/home/fi5666wi/Brain_CT_MR_data/ensemble_results/ct_seg_new.csv")
 
         save_volume_results(volume_results)
 

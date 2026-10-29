@@ -19,7 +19,7 @@ from monai.transforms import (
     AsDiscrete
 )
 
-from torchmetrics import Dice, JaccardIndex
+#from torchmetrics import Dice, JaccardIndex
 
 from brainCT.train_utils.data_loader import VotingDataset
 from brainCT.train_utils.modules import SegModule3d

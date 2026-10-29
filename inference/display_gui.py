@@ -5,7 +5,9 @@ import cv2
 import tkinter as tk
 from tkinter import messagebox
 from PIL import Image, ImageTk
-from torchmetrics import Dice, JaccardIndex
+#from torchmetrics import Dice, JaccardIndex
+from brainCT.train_utils.metrics import DiceScore
+from monai.metrics import HausdorffDistanceMetric
 
 
 class SegmentationGUI:
@@ -136,8 +138,8 @@ class SegmentationGUI2:
         assert seg.shape == mri.shape, "Segmentation and MRI must also have the same shape"
         assert seg.shape == ct.shape, "Segmentation and CT must also have the same shape"
 
-        #self.dice = Dice(zero_division=np.nan, ignore_index=0)
-        self.iou = JaccardIndex(task='binary')
+        self.dice = DiceScore(include_background=False, zero_division=np.nan)
+        self.hsd = HausdorffDistanceMetric(include_background=False, distance_metric='euclidean', percentile=95.0)
 
         self.index = 0
         self.max_index = seg.shape[1] - 1
@@ -175,13 +177,13 @@ class SegmentationGUI2:
 
         self.correct_on_canvas = self.canvas.create_image(650, 20, anchor=tk.NW, image=correct_img)
         self.wm_on_canvas = self.canvas.create_image(10, 350, anchor=tk.NW, image=wm_img)
-        self.wm_iou = self.canvas.create_text(160, 655, text=f"WM IoU: {metric[0]:.3f}", anchor=tk.N, fill="green")
+        self.wm_haus = self.canvas.create_text(160, 655, text=f"WM HD: {metric[0]:.3f}", anchor=tk.N, fill="green")
 
         self.gm_on_canvas = self.canvas.create_image(330, 350, anchor=tk.NW, image=gm_img)
-        self.gm_iou = self.canvas.create_text(480, 655, text=f"GM IoU: {metric[1]:.3f}", anchor=tk.N, fill="blue")
+        self.gm_haus = self.canvas.create_text(480, 655, text=f"GM HD: {metric[1]:.3f}", anchor=tk.N, fill="blue")
 
         self.csf_on_canvas = self.canvas.create_image(650, 350, anchor=tk.NW, image=csf_img)
-        self.csf_iou = self.canvas.create_text(800, 655, text=f"CSF IoU: {metric[2]:.3f}", anchor=tk.N, fill="red")
+        self.csf_haus = self.canvas.create_text(800, 655, text=f"CSF HD: {metric[2]:.3f}", anchor=tk.N, fill="red")
 
 
 
@@ -216,15 +218,15 @@ class SegmentationGUI2:
 
             self.canvas.itemconfig(self.wm_on_canvas, image=wm_img)
             self.canvas.wm_img = wm_img
-            self.canvas.itemconfig(self.wm_iou, text=f"WM IoU: {metric[0]:.3f}")
+            self.canvas.itemconfig(self.wm_haus, text=f"WM haus: {metric[0]:.3f}")
 
             self.canvas.itemconfig(self.gm_on_canvas, image=gm_img)
             self.canvas.gm_img = gm_img
-            self.canvas.itemconfig(self.gm_iou, text=f"GM IoU: {metric[1]:.3f}")
+            self.canvas.itemconfig(self.gm_haus, text=f"GM haus: {metric[1]:.3f}")
 
             self.canvas.itemconfig(self.csf_on_canvas, image=csf_img)
             self.canvas.csf_img = csf_img
-            self.canvas.itemconfig(self.csf_iou, text=f"CSF IoU: {metric[2]:.3f}")
+            self.canvas.itemconfig(self.csf_haus, text=f"CSF haus: {metric[2]:.3f}")
 
     def down_arrow_press(self, event):
         self.index -= 1
@@ -256,23 +258,22 @@ class SegmentationGUI2:
 
             self.canvas.itemconfig(self.wm_on_canvas, image=wm_img)
             self.canvas.wm_img = wm_img
-            self.canvas.itemconfig(self.wm_iou, text=f"WM IoU: {metric[0]:.3f}")
+            self.canvas.itemconfig(self.wm_haus, text=f"WM HD: {metric[0]:.3f}")
 
             self.canvas.itemconfig(self.gm_on_canvas, image=gm_img)
             self.canvas.gm_img = gm_img
-            self.canvas.itemconfig(self.gm_iou, text=f"GM IoU: {metric[1]:.3f}")
+            self.canvas.itemconfig(self.gm_haus, text=f"GM HD: {metric[1]:.3f}")
 
             self.canvas.itemconfig(self.csf_on_canvas, image=csf_img)
             self.canvas.csf_img = csf_img
-            self.canvas.itemconfig(self.csf_iou, text=f"CSF IoU: {metric[2]:.3f}")
+            self.canvas.itemconfig(self.csf_haus, text=f"CSF HD: {metric[2]:.3f}")
 
     def update_images(self):
         (wm, gm, csf) = np.split(self.seg[:, self.index, :, :], 3, axis=0)
         (wm_t, gm_t, csf_t) = np.split(self.gt[:, self.index, :, :], 3, axis=0)
-        ious = [self.iou(torch.from_numpy(wm), torch.from_numpy(wm_t)).item(),
-                self.iou(torch.from_numpy(gm), torch.from_numpy(gm_t)).item(),
-                self.iou(torch.from_numpy(csf), torch.from_numpy(csf_t)).item()]
-
+        haus = [self.hsd(torch.from_numpy(wm).unsqueeze(dim=0), torch.from_numpy(wm_t).unsqueeze(dim=0)).item(),
+                self.hsd(torch.from_numpy(gm).unsqueeze(dim=0), torch.from_numpy(gm_t).unsqueeze(dim=0)).item(),
+                self.hsd(torch.from_numpy(csf).unsqueeze(dim=0), torch.from_numpy(csf_t).unsqueeze(dim=0)).item()]
         wm_pred = np.zeros((256, 256, 3), dtype=np.uint8)
         wm_corr = np.logical_and(wm, wm_t)
         wm_incorr = np.logical_xor(wm, wm_t)
@@ -310,7 +311,7 @@ class SegmentationGUI2:
         pred_img = Image.fromarray(pred_img)
         tk_img = ImageTk.PhotoImage(pred_img.resize((300, 300)))
 
-        return tk_img, tk_wm_img, tk_gm_img, tk_csf_img, ious
+        return tk_img, tk_wm_img, tk_gm_img, tk_csf_img, haus
 
     def handle_keys(self):
         # Check if the up or down arrow keys are being held down
@@ -486,19 +487,20 @@ def load_all_nii(mri_path, ct_path, gt_path, using_3d=False):
 
 
 def calculate_metrics(seg, gt):
-    dice = Dice(zero_division=np.nan, ignore_index=0)
-    iou = JaccardIndex(task='binary')
+    gt = gt.astype(np.uint8)
+    dice = DiceScore(include_background=False, zero_division=np.nan)
+    hsd = HausdorffDistanceMetric(include_background=False, distance_metric='euclidean', percentile=95.0)
 
     (wm, gm, csf) = np.split(seg, 3, axis=0)
     (wm_t, gm_t, csf_t) = np.split(gt, 3, axis=0)
-    ious = [iou(torch.from_numpy(wm), torch.from_numpy(wm_t)).item(),
-            iou(torch.from_numpy(gm), torch.from_numpy(gm_t)).item(),
-            iou(torch.from_numpy(csf), torch.from_numpy(csf_t)).item()]
-    dscs = [dice(torch.from_numpy(wm), torch.from_numpy(wm_t)).item(),
-            dice(torch.from_numpy(gm), torch.from_numpy(gm_t)).item(),
-            dice(torch.from_numpy(csf), torch.from_numpy(csf_t)).item()]
+    haus = [hsd(torch.from_numpy(wm).unsqueeze(dim=0), torch.from_numpy(wm_t).unsqueeze(dim=0)).item(),
+            hsd(torch.from_numpy(gm).unsqueeze(dim=0), torch.from_numpy(gm_t).unsqueeze(dim=0)).item(),
+            hsd(torch.from_numpy(csf).unsqueeze(dim=0), torch.from_numpy(csf_t).unsqueeze(dim=0)).item()]
+    dscs = [dice(torch.from_numpy(wm), torch.from_numpy(wm_t)),
+            dice(torch.from_numpy(gm), torch.from_numpy(gm_t)),
+            dice(torch.from_numpy(csf), torch.from_numpy(csf_t))]
 
-    return ious, dscs
+    return haus, dscs
 
 
 
@@ -511,7 +513,7 @@ if __name__ == "__main__":
 
     #path = "/home/fi5666wi/Brain_CT_MR_data/matlab/8_Ms59/c01_1_00001_temp_8_Ms59_M70_l_T1_CTseg.nii"
     vol_name = "19_LH64"
-    path = f"/home/fi5666wi/Brain_CT_MR_data/OUT/crossval_2025-01-28/version_0_prob/{vol_name}_seg.nii.gz"
+    path = f"/home/fi5666wi/Brain_CT_MR_data/OUT/crossval_2025-01-31/version_0_prob/{vol_name}_seg.nii.gz"
     gt_path = f"/home/fi5666wi/Brain_CT_MR_data/DL/{vol_name}_seg3.nii"
     ct_path = f"/home/fi5666wi/Brain_CT_MR_data/DL/{vol_name}_M70_l_T1.nii"
     mr_path = f"/home/fi5666wi/Brain_CT_MR_data/DL/{vol_name}_T1.nii"
@@ -523,22 +525,20 @@ if __name__ == "__main__":
     print(mri.shape)
     print(ct.shape)
 
-    ious, dscs = calculate_metrics(seg, gt)
-    print(f"Dice scores (WM/GM/CSF): {np.around(dscs, decimals=4)}")
-    print(f"IoU scores (WM/GM/CSF): {np.around(ious, decimals=4)}")
+    if seg.shape[1] == gt.shape[1]+2:
+        seg = seg[:, 1:-1, :, :]  # remove first and last slice in 2.5D
 
-    ious, dscs = calculate_metrics(seg, gt)
+    haus, dscs = calculate_metrics(seg, gt)
     print(f"Dice scores (WM/GM/CSF): {np.around(dscs, decimals=4)}")
-    print(f"IoU scores (WM/GM/CSF): {np.around(ious, decimals=4)}")
-
+    print(f"95% HD scores (WM/GM/CSF): {np.around(haus, decimals=4)}")
 
     # Create the Tkinter window
     root = tk.Tk()
     root.title("Image Viewer")
 
     # Create an instance of the ImageApp class
-    #app = SegmentationGUI2(root, seg, gt, mri, ct)
-    app = SegmentationGUI3(root, gt, mri, ct)
+    app = SegmentationGUI2(root, seg, gt, mri, ct)
+    #app = SegmentationGUI3(root, gt, mri, ct)
 
     # Run the Tkinter event loop
     root.mainloop()

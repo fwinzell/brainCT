@@ -13,7 +13,7 @@ from monai.transforms import (
     AsDiscrete
 )
 from monai.networks.nets import UNet
-from torchmetrics import Dice, JaccardIndex
+#from torchmetrics import Dice, JaccardIndex
 from monai.metrics import HausdorffDistanceMetric
 import SimpleITK as sitk
 
